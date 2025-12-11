@@ -7,22 +7,47 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)  # Allow your mobile app to talk to this server
 
+# --- CONFIGURATION ---
+# Lower this number to make it STRICTER. 
+# 0.6 is default. 0.50 is good. 0.45 is very strict.
+TOLERANCE = 0.50 
+
 # --- DATABASE SIMULATION ---
 known_face_encodings = []
 known_face_names = []
 
 def load_known_faces():
     print("Loading database...")
-    try:
-        # Load Rudransh (MAKE SURE rudransh.jpg EXISTS)
-        img_rudransh = face_recognition.load_image_file("rudransh.jpg")
-        enc_rudransh = face_recognition.face_encodings(img_rudransh)[0]
-        known_face_encodings.append(enc_rudransh)
-        known_face_names.append("Rudransh Gupta")
-        print("Database loaded.")
-    except Exception as e:
-        print(f"Error loading face database: {e}")
-        print("Make sure 'rudransh.jpg' is in the backend folder!")
+    
+    # List of students to load
+    students_to_load = [
+        ("rudransh.jpg", "Rudransh Gupta"),
+        ("omkar.jpg", "Omkar Jadhav"),
+        ("pushkar.jpg", "Pushkar Jaju"),
+        ("Devesh.jpg", "Devesh Mahajan")
+    ]
+
+    for filename, name in students_to_load:
+        try:
+            # Load image file
+            img = face_recognition.load_image_file(filename)
+            # Encode face
+            encodings = face_recognition.face_encodings(img)
+            
+            if len(encodings) > 0:
+                encoding = encodings[0]
+                known_face_encodings.append(encoding)
+                known_face_names.append(name)
+                print(f"✅ Loaded: {name}")
+            else:
+                print(f"⚠️ Warning: No face found in '{filename}'. Skipping.")
+            
+        except FileNotFoundError:
+            print(f"⚠️ Warning: Could not find file '{filename}'. Skipping {name}.")
+        except Exception as e:
+            print(f"⚠️ Error loading {name}: {e}")
+
+    print(f"Database loaded with {len(known_face_names)} students.")
 
 # Load faces when app starts
 load_known_faces()
@@ -52,20 +77,34 @@ def scan_attendance():
 
     detected_name = "Unknown"
     status = "Absent"
+    debug_distance = 1.0 # Default high distance
 
     # 5. Compare found faces with known faces
     if len(face_encodings) > 0:
-        for face_encoding in face_encodings:
-            matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
-            if True in matches:
-                first_match_index = matches.index(True)
-                detected_name = known_face_names[first_match_index]
-                status = "Present"
-                break
+        # We only check the first face found in the image
+        face_encoding = face_encodings[0]
+        
+        # Calculate the distance to every known face
+        # Lower distance = More similar (0.0 is exact match)
+        face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+        
+        # Find the index of the face with the smallest distance
+        best_match_index = np.argmin(face_distances)
+        best_match_distance = face_distances[best_match_index]
+        debug_distance = best_match_distance
+
+        # STRICT CHECK: Only accept if distance is less than our TOLERANCE (0.50)
+        if best_match_distance < TOLERANCE:
+            detected_name = known_face_names[best_match_index]
+            status = "Present"
+        else:
+            detected_name = "Unknown"
+            status = "Absent"
+            
     else:
         return jsonify({"status": "error", "message": "No face detected in photo"})
 
-    print(f"Result: {detected_name} is {status}")
+    print(f"Scan Result: {detected_name} | Distance Score: {debug_distance:.4f} (Threshold: {TOLERANCE})")
     
     return jsonify({
         "status": "success",
@@ -74,5 +113,4 @@ def scan_attendance():
     })
 
 if __name__ == '__main__':
-    # '0.0.0.0' allows access from other devices (like your phone) on the same network
     app.run(host='0.0.0.0', port=5000, debug=True)
