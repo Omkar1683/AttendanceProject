@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 
 // Backend server URL - ensure your mobile device is on the same network
-const BASE_URL = 'http://192.168.180.104:5000';
+const BASE_URL = 'http://192.168.29.56:5000';
 
 const getHeaders = async () => {
     const token = await AsyncStorage.getItem('userToken');
