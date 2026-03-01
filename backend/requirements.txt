@@ -1,5 +1,12 @@
 flask
-face_recognition
-opencv-python
-numpy
 flask-cors
+face_recognition
+numpy
+opencv-python-headless
+pymongo
+PyJWT
+bcrypt
+python-dotenv
+pandas
+
+gunicorn
