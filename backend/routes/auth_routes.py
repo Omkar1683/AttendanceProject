@@ -60,10 +60,37 @@ def register_student():
 @token_required
 def get_classes():
     teacher_id = request.args.get('teacher_id')
+    # Fall back to current user's id from JWT if not provided
+    if not teacher_id:
+        teacher_id = request.user.get('user_id')
     print(f"🔍 GET /classes — teacher_id={teacher_id}")
     classes = auth_svc.get_classes(teacher_id)
     print(f"🔍 Returning {len(classes)} classes")
     return jsonify({'status': 'success', 'data': classes})
+
+
+# ── /classes/create ───────────────────────────────────────────────────────────
+
+@auth_bp.route('/classes/create', methods=['POST'])
+@token_required
+@role_required('teacher')
+def create_class():
+    data = request.get_json(silent=True) or {}
+    # teacher_id from JWT token (set on request.user by @token_required)
+    teacher_id = request.user.get('user_id')
+    result = auth_svc.create_class(
+        teacher_id=teacher_id,
+        name=data.get('name'),
+        code=data.get('code'),
+        total_students=data.get('total_students', 1),
+        batch=data.get('batch'),
+        department=data.get('department'),
+        schedule=data.get('schedule'),
+    )
+    if result['ok']:
+        return jsonify({'status': 'success', 'message': 'Class created successfully',
+                        'class_id': result['class_id']}), 201
+    return jsonify({'status': 'error', 'message': result['message']}), result['code']
 
 
 # ── / (health check) ─────────────────────────────────────────────────────────

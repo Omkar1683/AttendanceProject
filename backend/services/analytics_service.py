@@ -133,7 +133,19 @@ def get_monthly_report(class_id: str, month: int, year: int) -> dict:
         })
 
     student_reports.sort(key=lambda x: x['name'])
-    return {'total_classes': total_classes, 'month': month, 'year': year, 'students': student_reports}
+
+    # Expose session IDs so the mobile app can use them for manual attendance edits
+    latest_session_id = str(sessions[-1]['_id']) if sessions else None
+    all_session_ids = [str(s['_id']) for s in sessions]
+
+    return {
+        'total_classes': total_classes,
+        'month': month,
+        'year': year,
+        'latest_session_id': latest_session_id,
+        'sessions': all_session_ids,
+        'students': student_reports,
+    }
 
 
 def get_student_report(student_id: str) -> dict:

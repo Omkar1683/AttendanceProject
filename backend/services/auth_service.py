@@ -125,7 +125,52 @@ def get_classes(teacher_id: str = None) -> list:
             'name':           c['name'],
             'code':           c.get('code', ''),
             'batch':          c.get('batch', ''),
+            'department':     c.get('department', ''),
+            'schedule':       c.get('schedule', ''),
             'total_students': c.get('total_students', 0),
         }
         for c in classes
     ]
+
+
+def create_class(
+    teacher_id: str,
+    name: str,
+    code: str,
+    total_students: int = 1,
+    batch: str = None,
+    department: str = None,
+    schedule: str = None,
+) -> dict:
+    """
+    Create a new class/subject linked to the teacher.
+
+    Returns:
+        {'ok': True,  'class_id': str}             on success
+        {'ok': False, 'message': str, 'code': int} on failure
+    """
+    if not teacher_id:
+        return {'ok': False, 'message': 'Teacher ID required', 'code': 401}
+    if not name or not code:
+        return {'ok': False, 'message': 'name and code are required', 'code': 400}
+
+    db = get_db()
+    models = get_models(db)
+
+    # Prevent duplicate class codes
+    if models['classes'].find_by_code(code):
+        return {'ok': False, 'message': f'A class with code "{code.upper()}" already exists', 'code': 409}
+
+    class_id = models['classes'].create_class(
+        name=name,
+        code=code,
+        teacher_id=teacher_id,
+        total_students=int(total_students),
+        batch=batch,
+        department=department,
+        schedule=schedule,
+    )
+
+    if class_id:
+        return {'ok': True, 'class_id': class_id}
+    return {'ok': False, 'message': 'Failed to create class', 'code': 500}

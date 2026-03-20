@@ -1,9 +1,10 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 // Backend server URL - ensure your mobile device is on the same network
-const BASE_URL = 'http://192.168.29.56:5000';
+const BASE_URL = 'http://10.243.206.70:5000';
 
 const getHeaders = async () => {
     const token = await AsyncStorage.getItem('userToken');
@@ -55,6 +56,17 @@ export const api = {
         return response.json();
     },
 
+    // ── NEW: Create Subject/Class ──────────────────────────────────────────────
+    createClass: async ({ name, code, total_students, batch, department, schedule }) => {
+        const headers = await getHeaders();
+        const response = await fetch(`${BASE_URL}/classes/create`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ name, code, total_students, batch, department, schedule }),
+        });
+        return response.json();
+    },
+
     getTodayAnalytics: async (classId) => {
         const headers = await getHeaders();
         const response = await fetch(`${BASE_URL}/analytics/today?class_id=${classId}`, { headers });
@@ -99,6 +111,53 @@ export const api = {
         const headers = await getHeaders();
         const response = await fetch(`${BASE_URL}/reports/student/${studentId}`, { headers });
         return response.json();
+    },
+
+    // ── NEW: Manual Attendance Edit ───────────────────────────────────────────
+    manualAttendance: async (studentId, sessionId, status) => {
+        const headers = await getHeaders();
+        const response = await fetch(`${BASE_URL}/attendance/manual`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                student_id: studentId,
+                session_id: sessionId,
+                status,          // 'Present' or 'Absent'
+            }),
+        });
+        return response.json();
+    },
+
+    // ── NEW: CSV Download & Share ─────────────────────────────────────────────
+    downloadAndShareCSV: async (classId, month, year, className) => {
+        const token = await AsyncStorage.getItem('userToken');
+        const url = `${BASE_URL}/reports/export-csv?class_id=${classId}&month=${month}&year=${year}`;
+        const fileName = `attendance_${className || 'report'}_${month}_${year}.csv`
+            .replace(/\s+/g, '_');
+        const localUri = FileSystem.documentDirectory + fileName;
+
+        // Download the file with auth header
+        const downloadResult = await FileSystem.downloadAsync(url, localUri, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (downloadResult.status !== 200) {
+            throw new Error(`Download failed with status ${downloadResult.status}`);
+        }
+
+        // Share the downloaded file
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+            await Sharing.shareAsync(downloadResult.uri, {
+                mimeType: 'text/csv',
+                dialogTitle: `Share ${fileName}`,
+                UTI: 'public.comma-separated-values-text',
+            });
+        } else {
+            throw new Error('Sharing is not available on this device');
+        }
+
+        return downloadResult.uri;
     },
 
     // Notifications

@@ -343,6 +343,15 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
   const [loading, setLoading] = useState(true);
   const [showClassPicker, setShowClassPicker] = useState(false);
 
+  // Add Subject modal state
+  const [showAddSubject, setShowAddSubject] = useState(false);
+  const [newSubjectName, setNewSubjectName] = useState('');
+  const [newSubjectCode, setNewSubjectCode] = useState('');
+  const [newSubjectStudents, setNewSubjectStudents] = useState('');
+  const [newSubjectBatch, setNewSubjectBatch] = useState('');
+  const [newSubjectDept, setNewSubjectDept] = useState('');
+  const [addingSubject, setAddingSubject] = useState(false);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -409,6 +418,49 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
     setShowClassPicker(false);
   };
 
+  const handleAddSubject = async () => {
+    if (!newSubjectName.trim() || !newSubjectCode.trim()) {
+      Alert.alert('Validation Error', 'Subject Name and Code are required.');
+      return;
+    }
+    const totalStudents = parseInt(newSubjectStudents, 10);
+    if (isNaN(totalStudents) || totalStudents < 1) {
+      Alert.alert('Validation Error', 'Enter a valid number of students (≥ 1).');
+      return;
+    }
+    setAddingSubject(true);
+    try {
+      const result = await api.createClass({
+        name: newSubjectName.trim(),
+        code: newSubjectCode.trim().toUpperCase(),
+        total_students: totalStudents,
+        batch: newSubjectBatch.trim() || undefined,
+        department: newSubjectDept.trim() || undefined,
+      });
+      if (result.status === 'success') {
+        Alert.alert('Success', `Subject "${newSubjectName}" created!`);
+        // Reset form
+        setNewSubjectName(''); setNewSubjectCode('');
+        setNewSubjectStudents(''); setNewSubjectBatch(''); setNewSubjectDept('');
+        setShowAddSubject(false);
+        // Reload class dropdown
+        const classesResult = await api.getClasses(userInfo.id);
+        if (classesResult.status === 'success') {
+          setClasses(classesResult.data);
+          // Auto-select newly created class
+          const newClass = classesResult.data.find(c => c.id === result.class_id);
+          if (newClass) setSelectedClassId(newClass.id);
+        }
+      } else {
+        Alert.alert('Error', result.message || 'Could not create subject');
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Network error');
+    } finally {
+      setAddingSubject(false);
+    }
+  };
+
   if (loading) {
     return (
       <View style={[styles.screenContainer, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -421,7 +473,7 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
 
   return (
     <View style={styles.screenContainer}>
-      {/* Class Picker Modal */}
+      {/* ── Class Picker Modal ──────────────────────────────────────── */}
       <Modal
         visible={showClassPicker}
         transparent={true}
@@ -442,21 +494,112 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
                     ]}
                     onPress={() => handleClassSelect(cls.id)}
                   >
-                    <Text style={styles.modalItemText}>{cls.name}</Text>
+                    <Text style={styles.modalItemText}>{cls.name} ({cls.code})</Text>
                     <Text style={styles.modalItemSubtext}>{cls.batch} • {cls.total_students} students</Text>
                   </TouchableOpacity>
                 ))
               ) : (
                 <View style={{ padding: 32, alignItems: 'center' }}>
-                  <Text style={{ color: '#6b7280', fontSize: 14, textAlign: 'center' }}>No classes found.{'\n'}Please add classes first.</Text>
+                  <Text style={{ color: '#6b7280', fontSize: 14, textAlign: 'center' }}>No classes found.{'\n'}Tap "+ Add Subject" below.</Text>
                 </View>
               )}
             </ScrollView>
+            <TouchableOpacity
+              style={[styles.modalCloseButton, { backgroundColor: '#eff6ff', marginBottom: 8 }]}
+              onPress={() => { setShowClassPicker(false); setShowAddSubject(true); }}
+            >
+              <Text style={{ color: '#2563eb', fontWeight: 'bold', fontSize: 14 }}>+ Add New Subject</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={() => setShowClassPicker(false)}
             >
               <Text style={styles.modalCloseButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Add Subject Modal ──────────────────────────────────────── */}
+      <Modal
+        visible={showAddSubject}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowAddSubject(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            <Text style={styles.modalTitle}>➕ Add New Subject</Text>
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Subject Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Data Structures"
+                  placeholderTextColor="#9ca3af"
+                  value={newSubjectName}
+                  onChangeText={setNewSubjectName}
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Subject Code *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., CS301"
+                  placeholderTextColor="#9ca3af"
+                  value={newSubjectCode}
+                  onChangeText={setNewSubjectCode}
+                  autoCapitalize="characters"
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Total Students *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 60"
+                  placeholderTextColor="#9ca3af"
+                  value={newSubjectStudents}
+                  onChangeText={setNewSubjectStudents}
+                  keyboardType="number-pad"
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Batch</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., MCA 2A"
+                  placeholderTextColor="#9ca3af"
+                  value={newSubjectBatch}
+                  onChangeText={setNewSubjectBatch}
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Department</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., MCA"
+                  placeholderTextColor="#9ca3af"
+                  value={newSubjectDept}
+                  onChangeText={setNewSubjectDept}
+                />
+              </View>
+            </ScrollView>
+            <TouchableOpacity
+              style={[styles.primaryButton, { marginTop: 12 }]}
+              onPress={handleAddSubject}
+              disabled={addingSubject}
+            >
+              {addingSubject ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.primaryButtonText}>✓ Create Subject</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modalCloseButton, { marginTop: 8 }]}
+              onPress={() => setShowAddSubject(false)}
+            >
+              <Text style={styles.modalCloseButtonText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -477,13 +620,18 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
 
         {/* Session Selector */}
         <View style={styles.card}>
-          <Text style={styles.cardLabel}>SELECT SESSION</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Text style={styles.cardLabel}>SELECT SESSION</Text>
+            <TouchableOpacity onPress={() => setShowAddSubject(true)}>
+              <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '700' }}>+ Add Subject</Text>
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
             style={styles.pickerContainer}
             onPress={() => setShowClassPicker(true)}
           >
             <Text style={styles.pickerText}>
-              {selectedClassData ? `${selectedClassData.name} - ${selectedClassData.batch} ` : 'Select a class'}
+              {selectedClassData ? `${selectedClassData.name} (${selectedClassData.code})` : 'Select a class'}
             </Text>
             <ChevronDown color="#4b5563" size={20} />
           </TouchableOpacity>
@@ -492,7 +640,11 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
             <View style={styles.statsRow}>
               <View style={styles.miniStat}>
                 <Text style={styles.miniStatLabel}>BATCH</Text>
-                <Text style={styles.miniStatValue}>{selectedClassData.batch}</Text>
+                <Text style={styles.miniStatValue}>{selectedClassData.batch || '—'}</Text>
+              </View>
+              <View style={styles.miniStat}>
+                <Text style={styles.miniStatLabel}>CODE</Text>
+                <Text style={styles.miniStatValue}>{selectedClassData.code}</Text>
               </View>
               <View style={styles.miniStat}>
                 <Text style={styles.miniStatLabel}>TOTAL</Text>
@@ -523,33 +675,41 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
           </View>
         )}
 
-        {/* Action Buttons */}
-        <View style={styles.actionGrid}>
+        {/* Action Buttons — 2x2 Grid */}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#16a34a' }]}
+            style={[styles.actionButton, { backgroundColor: '#16a34a', width: '47%' }]}
             onPress={handleStartAttendance}
           >
-            <Camera color="white" size={32} style={{ marginBottom: 8 }} />
+            <Camera color="white" size={28} style={{ marginBottom: 6 }} />
             <Text style={styles.actionButtonText}>Start{'\n'}Attendance</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#6366f1' }]}
+            style={[styles.actionButton, { backgroundColor: '#6366f1', width: '47%' }]}
             onPress={() => {
               setSelectedClass(selectedClassData);
               navigateTo('DetailedReport');
             }}
           >
-            <BarChart3 color="white" size={32} style={{ marginBottom: 8 }} />
+            <BarChart3 color="white" size={28} style={{ marginBottom: 6 }} />
             <Text style={styles.actionButtonText}>View{'\n'}Reports</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#ea580c' }]}
+            style={[styles.actionButton, { backgroundColor: '#ea580c', width: '47%' }]}
             onPress={() => navigateTo('RegisterStudent')}
           >
-            <Camera color="white" size={32} style={{ marginBottom: 8 }} />
+            <Camera color="white" size={28} style={{ marginBottom: 6 }} />
             <Text style={styles.actionButtonText}>Register{'\n'}Student</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#0891b2', width: '47%' }]}
+            onPress={() => setShowAddSubject(true)}
+          >
+            <Text style={{ fontSize: 26, marginBottom: 6 }}>📚</Text>
+            <Text style={styles.actionButtonText}>Add{'\n'}Subject</Text>
           </TouchableOpacity>
         </View>
 
@@ -1142,47 +1302,289 @@ const StudentDashboard = ({ navigateTo, userInfo, onLogout }) => {
 };
 
 // --- 5. DETAILED REPORT SCREEN ---
+const MONTHS = [
+  { label: 'January', value: 1 }, { label: 'February', value: 2 },
+  { label: 'March', value: 3 },   { label: 'April', value: 4 },
+  { label: 'May', value: 5 },     { label: 'June', value: 6 },
+  { label: 'July', value: 7 },    { label: 'August', value: 8 },
+  { label: 'September', value: 9 },{ label: 'October', value: 10 },
+  { label: 'November', value: 11 },{ label: 'December', value: 12 },
+];
+const YEARS = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+
 const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [year, setYear] = useState(new Date().getFullYear());
   const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [csvLoading, setCsvLoading] = useState(false);
 
+  // Month / Year picker modal state
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showYearPicker, setShowYearPicker] = useState(false);
+
+  // Edit attendance modal state
+  const [editStudent, setEditStudent] = useState(null);        // { student_id, name, session_id, currentStatus }
+  const [editStatus, setEditStatus] = useState('Present');
+  const [editLoading, setEditLoading] = useState(false);
+
+  // Fetch report whenever class / month / year changes
   useEffect(() => {
-    if (selectedClass) {
-      loadReport();
+    if (selectedClass?.id) {
+      loadReport(selectedClass.id, month, year);
     }
-  }, [month, year]);
+  }, [selectedClass, month, year]);
 
-  const loadReport = async () => {
+  const loadReport = async (classId, m, y) => {
+    setLoading(true);
     try {
-      const result = await api.getClassReport(selectedClass.id, month, year);
+      const result = await api.getClassReport(classId, m, y);
       if (result.status === 'success') {
         setReport(result.data);
+      } else {
+        Alert.alert('Error', result.message || 'Failed to load report');
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to load report');
+      Alert.alert('Error', 'Network error loading report');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDownloadCSV = () => {
-    Alert.alert('Download', 'CSV export functionality requires native file handling. Use web dashboard for CSV export.');
+  const handleMonthSelect = (m) => {
+    setMonth(m);
+    setShowMonthPicker(false);
   };
+
+  const handleYearSelect = (y) => {
+    setYear(y);
+    setShowYearPicker(false);
+  };
+
+  // Open Edit modal for a student
+  const openEditModal = (student) => {
+    // We need a session_id for this month — use the first session in the report
+    // The backend manual endpoint uses session_id to identify which record to update
+    // We'll pass a "virtual" session reference: the report includes sessions for this month
+    // For manual edit we use the most recent session from report.sessions if available
+    const sessionId = report?.latest_session_id || report?.sessions?.[0] || null;
+    setEditStudent({
+      student_id: student.student_id,
+      name: student.name,
+      session_id: sessionId,
+      currentStatus: student.status,  // 'Good' or 'Defaulter' — attendance %
+      attendance: student.attendance,
+    });
+    setEditStatus(student.attendance > 0 ? 'Present' : 'Absent');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editStudent?.session_id) {
+      Alert.alert(
+        'No Session Found',
+        'Cannot edit attendance for a month with no recorded sessions. Start a session first.'
+      );
+      return;
+    }
+    setEditLoading(true);
+    try {
+      const result = await api.manualAttendance(
+        editStudent.student_id,
+        editStudent.session_id,
+        editStatus
+      );
+      if (result.status === 'success') {
+        // Instant UI update — update the student's status in local state
+        setReport(prev => {
+          if (!prev) return prev;
+          const updatedStudents = prev.students.map(s => {
+            if (s.student_id === editStudent.student_id) {
+              const newPresent = editStatus === 'Present'
+                ? Math.min(s.present + 1, s.total)
+                : Math.max(s.present - 1, 0);
+              const newPct = prev.total_classes > 0
+                ? Math.round((newPresent / prev.total_classes) * 100 * 100) / 100
+                : 0;
+              return {
+                ...s,
+                present: newPresent,
+                absent: s.total - newPresent,
+                attendance: newPct,
+                status: newPct >= 75 ? 'Good' : 'Defaulter',
+              };
+            }
+            return s;
+          });
+          return { ...prev, students: updatedStudents };
+        });
+        Alert.alert('Saved', `${editStudent.name} marked as ${editStatus}`);
+        setEditStudent(null);
+      } else {
+        Alert.alert('Error', result.message || 'Could not save');
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Network error');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const handleDownloadCSV = async () => {
+    if (!selectedClass?.id) {
+      Alert.alert('Error', 'No class selected');
+      return;
+    }
+    setCsvLoading(true);
+    try {
+      await api.downloadAndShareCSV(
+        selectedClass.id,
+        month,
+        year,
+        selectedClass.name
+      );
+    } catch (err) {
+      Alert.alert('Download Failed', err.message || 'Could not download CSV');
+    } finally {
+      setCsvLoading(false);
+    }
+  };
+
+  const selectedMonthLabel = MONTHS.find(m => m.value === month)?.label || '';
 
   return (
     <View style={styles.screenContainer}>
+
+      {/* ── Month Picker Modal ─────────────────────────── */}
+      <Modal visible={showMonthPicker} transparent animationType="slide"
+        onRequestClose={() => setShowMonthPicker(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select Month</Text>
+            <ScrollView style={{ maxHeight: 380 }}>
+              {MONTHS.map(m => (
+                <TouchableOpacity
+                  key={m.value}
+                  style={[styles.modalItem, m.value === month && styles.modalItemSelected]}
+                  onPress={() => handleMonthSelect(m.value)}
+                >
+                  <Text style={[styles.modalItemText, m.value === month && { color: '#2563eb' }]}>
+                    {m.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowMonthPicker(false)}>
+              <Text style={styles.modalCloseButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Year Picker Modal ──────────────────────────── */}
+      <Modal visible={showYearPicker} transparent animationType="slide"
+        onRequestClose={() => setShowYearPicker(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select Year</Text>
+            <ScrollView style={{ maxHeight: 280 }}>
+              {YEARS.map(y => (
+                <TouchableOpacity
+                  key={y}
+                  style={[styles.modalItem, y === year && styles.modalItemSelected]}
+                  onPress={() => handleYearSelect(y)}
+                >
+                  <Text style={[styles.modalItemText, y === year && { color: '#2563eb' }]}>{y}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowYearPicker(false)}>
+              <Text style={styles.modalCloseButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Edit Attendance Modal ──────────────────────── */}
+      <Modal visible={!!editStudent} transparent animationType="fade"
+        onRequestClose={() => setEditStudent(null)}>
+        <View style={[styles.modalOverlay, { justifyContent: 'center', paddingHorizontal: 24 }]}>
+          <View style={[styles.modalContent, { borderRadius: 20 }]}>
+            <Text style={styles.modalTitle}>Edit Attendance</Text>
+            <Text style={{ color: '#6b7280', fontSize: 14, marginBottom: 16 }}>
+              {editStudent?.name}  •  Current: {editStudent?.attendance}%
+            </Text>
+
+            {/* Toggle Present / Absent */}
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 20 }}>
+              <TouchableOpacity
+                style={[{
+                  flex: 1, padding: 16, borderRadius: 12, alignItems: 'center',
+                  borderWidth: 2,
+                  borderColor: editStatus === 'Present' ? '#16a34a' : '#e5e7eb',
+                  backgroundColor: editStatus === 'Present' ? '#dcfce7' : '#f9fafb',
+                }]}
+                onPress={() => setEditStatus('Present')}
+              >
+                <Text style={{ fontSize: 22, marginBottom: 4 }}>✅</Text>
+                <Text style={{
+                  fontWeight: 'bold', fontSize: 14,
+                  color: editStatus === 'Present' ? '#16a34a' : '#9ca3af'
+                }}>
+                  Present
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[{
+                  flex: 1, padding: 16, borderRadius: 12, alignItems: 'center',
+                  borderWidth: 2,
+                  borderColor: editStatus === 'Absent' ? '#dc2626' : '#e5e7eb',
+                  backgroundColor: editStatus === 'Absent' ? '#fee2e2' : '#f9fafb',
+                }]}
+                onPress={() => setEditStatus('Absent')}
+              >
+                <Text style={{ fontSize: 22, marginBottom: 4 }}>❌</Text>
+                <Text style={{
+                  fontWeight: 'bold', fontSize: 14,
+                  color: editStatus === 'Absent' ? '#dc2626' : '#9ca3af'
+                }}>
+                  Absent
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.primaryButton, { marginBottom: 8 }]}
+              onPress={handleSaveEdit}
+              disabled={editLoading}
+            >
+              {editLoading
+                ? <ActivityIndicator color="white" />
+                : <Text style={styles.primaryButtonText}>💾 Save Change</Text>
+              }
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setEditStudent(null)}
+            >
+              <Text style={styles.modalCloseButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigateTo('TeacherDashboard')}
-          style={{ padding: 10, marginRight: 8 }}
-        >
+        <TouchableOpacity onPress={() => navigateTo('TeacherDashboard')}
+          style={{ padding: 10, marginRight: 8 }}>
           <ChevronLeft color="#374151" size={30} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Attendance Register</Text>
-        <TouchableOpacity onPress={handleDownloadCSV}>
-          <Download color="#374151" size={24} />
+        <TouchableOpacity onPress={handleDownloadCSV} disabled={csvLoading}>
+          {csvLoading
+            ? <ActivityIndicator size="small" color="#374151" />
+            : <Download color="#374151" size={24} />
+          }
         </TouchableOpacity>
       </View>
 
@@ -1190,31 +1592,73 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
         {/* Class Info */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>{selectedClass?.name}</Text>
-          <Text style={styles.label}>Total Classes: {report?.total_classes || 0}</Text>
+          <Text style={styles.label}>Total Sessions: {report?.total_classes || 0}</Text>
         </View>
 
-        {/* Date Filters */}
+        {/* ── Filter Row — Month & Year (INTERACTIVE) ── */}
         <View style={styles.filterRow}>
-          <View style={styles.filterBox}>
-            <Text>{new Date(year, month - 1).toLocaleString('default', { month: 'long' })}</Text>
+          <TouchableOpacity
+            style={[styles.filterBox, { flex: 1 }]}
+            onPress={() => setShowMonthPicker(true)}
+          >
+            <Text style={{ fontSize: 14, color: '#111827', fontWeight: '500' }}>
+              {selectedMonthLabel}
+            </Text>
             <ChevronDown size={16} color="#6b7280" />
-          </View>
-          <View style={[styles.filterBox, { width: '30%' }]}>
-            <Text>{year}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterBox, { width: '32%' }]}
+            onPress={() => setShowYearPicker(true)}
+          >
+            <Text style={{ fontSize: 14, color: '#111827', fontWeight: '500' }}>{year}</Text>
             <ChevronDown size={16} color="#6b7280" />
-          </View>
+          </TouchableOpacity>
         </View>
+
+        {/* CSV Download Banner */}
+        <TouchableOpacity
+          style={{
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+            backgroundColor: '#eff6ff', padding: 10, borderRadius: 10, marginBottom: 12,
+            borderWidth: 1, borderColor: '#bfdbfe',
+          }}
+          onPress={handleDownloadCSV}
+          disabled={csvLoading}
+        >
+          <Download color="#2563eb" size={16} style={{ marginRight: 8 }} />
+          <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 13 }}>
+            {csvLoading ? 'Preparing CSV...' : `Download CSV — ${selectedMonthLabel} ${year}`}
+          </Text>
+        </TouchableOpacity>
 
         {/* Student List */}
         {loading ? (
-          <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 20 }} />
+          <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
+        ) : !report?.students?.length ? (
+          <View style={[styles.card, { alignItems: 'center', padding: 32 }]}>
+            <Text style={{ color: '#6b7280', fontSize: 14 }}>
+              No sessions found for {selectedMonthLabel} {year}
+            </Text>
+          </View>
         ) : (
           <View style={styles.card}>
-            {report?.students?.map((student, index) => (
-              <View key={index} style={styles.listItem}>
-                <View>
+            <View style={[styles.cardHeader, { marginBottom: 12 }]}>
+              <Text style={styles.sectionTitle}>
+                Students ({report.students.length})
+              </Text>
+              <Text style={styles.label}>{report.total_classes} sessions</Text>
+            </View>
+            {report.students.map((student, index) => (
+              <View key={index} style={[styles.listItem, {
+                backgroundColor: index % 2 === 0 ? '#ffffff' : '#f9fafb',
+                paddingHorizontal: 8, borderRadius: 8,
+              }]}>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.listName}>{student.name}</Text>
-                  <Text style={styles.listSub}>Roll: {student.roll_no}</Text>
+                  <Text style={styles.listSub}>
+                    Roll: {student.roll_no}  •  {student.present}/{student.total} present
+                  </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={[
@@ -1223,7 +1667,16 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
                   ]}>
                     {student.attendance}%
                   </Text>
-                  <Text style={styles.editLink}>Edit</Text>
+                  <TouchableOpacity
+                    style={{
+                      marginTop: 4, paddingHorizontal: 10, paddingVertical: 3,
+                      borderRadius: 6, borderWidth: 1,
+                      borderColor: '#2563eb', backgroundColor: '#eff6ff'
+                    }}
+                    onPress={() => openEditModal(student)}
+                  >
+                    <Text style={{ color: '#2563eb', fontSize: 11, fontWeight: '700' }}>✏ Edit</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             ))}
