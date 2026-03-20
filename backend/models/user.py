@@ -7,7 +7,9 @@ import re
 from datetime import datetime
 from typing import Optional, List, Dict
 
+from bson import ObjectId
 from .base import BaseModel
+
 
 
 class UserModel(BaseModel):
@@ -64,6 +66,20 @@ class UserModel(BaseModel):
 
     def find_by_role(self, role: str) -> List[Dict]:
         return self.find_many({'role': role})
+
+    # ── Updates ───────────────────────────────────────────────────────────────
+
+    def update_profile(self, user_id: str, fields: dict) -> bool:
+        """Update allowed profile fields (name, phone, department) for a user."""
+        allowed = {k: v for k, v in fields.items() if k in ('name', 'phone', 'department')}
+        if not allowed:
+            return False
+        return self.update_one({'_id': ObjectId(user_id)}, {'$set': allowed})
+
+    def update_password(self, user_id: str, new_hash: bytes) -> bool:
+        """Overwrite the stored bcrypt password hash."""
+        return self.update_one({'_id': ObjectId(user_id)}, {'$set': {'password': new_hash}})
+
 
     # ── Validation ────────────────────────────────────────────────────────────
 

@@ -151,10 +151,20 @@ def get_monthly_report(class_id: str, month: int, year: int) -> dict:
 def get_student_report(student_id: str) -> dict:
     """Overall attendance breakdown for one student across all subjects."""
     db = get_db()
-    student_logs = list(db['attendance_logs'].find({'student_id': student_id}))
+    print(f"DEBUG: get_student_report for student_id: {student_id}")
+
+    # Robust matching: try both string and ObjectId just in case
+    ids_to_match = [student_id]
+    try:
+        ids_to_match.append(ObjectId(student_id))
+    except:
+        pass
+
+    student_logs = list(db['attendance_logs'].find({'student_id': {'$in': ids_to_match}}))
+    print(f"DEBUG: Found {len(student_logs)} logs for student")
 
     if not student_logs:
-        return {'overall_percentage': 0, 'subjects': []}
+        return {'overall_percentage': 0, 'total_present': 0, 'total_classes': 0, 'subjects': []}
 
     session_ids = list({log['session_id'] for log in student_logs})
     sessions = list(db['sessions'].find({'_id': {'$in': session_ids}}))
@@ -240,3 +250,141 @@ def get_subject_averages(teacher_id: str) -> list:
         })
 
     return result
+
+
+# ── Student-facing analytics ────────────────────────────────────────────────
+
+def get_student_timeline(student_id: str, month: int, year: int) -> list:
+    """
+    Return daily attendance entries for a student in a given month/year,
+    joined with session date and class name.  Used by the calendar screen.
+
+    Returns a list of dicts:
+        [{'date': 'YYYY-MM-DD', 'time': 'HH:MM', 'subject': str,
+          'status': 'Present'|'Absent', 'marked_by': 'AI'|'Manual',
+          'confidence': float|None}, ...]
+    """
+    db = get_db()
+    start = datetime(year, month, 1)
+    end   = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
+
+    ids_to_match = [student_id]
+    try:
+        ids_to_match.append(ObjectId(student_id))
+    except:
+        pass
+
+    logs = list(db['attendance_logs'].find({'student_id': {'$in': ids_to_match}}))
+    if not logs:
+        return []
+
+    session_ids = [l['session_id'] for l in logs]
+    sessions_raw = list(db['sessions'].find({
+        '_id':  {'$in': session_ids},
+        'date': {'$gte': start, '$lt': end},
+    }))
+    if not sessions_raw:
+        return []
+
+    sessions_map = {str(s['_id']): s for s in sessions_raw}
+
+    class_ids = list({s['class_id'] for s in sessions_raw})
+    classes_list = list(db['classes'].find({'_id': {'$in': class_ids}}))
+
+    teacher_ids = list({c['teacher_id'] for c in classes_list})
+    teachers_map = {
+        str(u['_id']): u.get('name', 'Unknown')
+        for u in db['users'].find({'_id': {'$in': teacher_ids}})
+    }
+
+    classes_map = {}
+    for c in classes_list:
+        classes_map[str(c['_id'])] = {
+            'name': c.get('name', 'Unknown'),
+            'faculty': teachers_map.get(str(c['teacher_id']), 'Unknown')
+        }
+
+    timeline = []
+    for log in logs:
+        session = sessions_map.get(str(log['session_id']))
+        if not session:
+            continue
+        cls_info = classes_map.get(str(session['class_id']), {'name': 'Unknown', 'faculty': 'Unknown'})
+        timeline.append({
+            'date':         session['date'].strftime('%Y-%m-%d'),
+            'time':         log['timestamp'].strftime('%H:%M'),
+            'subject':      cls_info['name'],
+            'faculty_name': cls_info['faculty'],
+            'status':       log['status'],
+            'marked_by':    log['marked_by'],
+            'confidence':   log.get('confidence'),
+        })
+
+    timeline.sort(key=lambda x: x['date'])
+    return timeline
+
+
+def get_student_session_history(student_id: str, page: int = 1, limit: int = 15) -> dict:
+    """
+    Paginated attendance session history for one student.
+    Returns: {'total': int, 'page': int, 'limit': int, 'sessions': [...]}
+    """
+    db = get_db()
+    skip = (page - 1) * limit
+
+    ids_to_match = [student_id]
+    try:
+        ids_to_match.append(ObjectId(student_id))
+    except:
+        pass
+
+    total = db['attendance_logs'].count_documents({'student_id': {'$in': ids_to_match}})
+    logs = list(
+        db['attendance_logs']
+        .find({'student_id': {'$in': ids_to_match}})
+        .sort('timestamp', -1)
+        .skip(skip)
+        .limit(limit)
+    )
+
+    if not logs:
+        return {'total': total, 'page': page, 'limit': limit, 'sessions': []}
+
+    session_ids = [l['session_id'] for l in logs]
+    sessions_map = {
+        str(s['_id']): s
+        for s in db['sessions'].find({'_id': {'$in': session_ids}})
+    }
+
+    class_ids = list({s['class_id'] for s in sessions_map.values()})
+    classes_list = list(db['classes'].find({'_id': {'$in': class_ids}}))
+
+    teacher_ids = list({c['teacher_id'] for c in classes_list})
+    teachers_map = {
+        str(u['_id']): u.get('name', 'Unknown')
+        for u in db['users'].find({'_id': {'$in': teacher_ids}})
+    }
+
+    classes_map = {}
+    for c in classes_list:
+        classes_map[str(c['_id'])] = {
+            'name': c.get('name', 'Unknown'),
+            'faculty': teachers_map.get(str(c['teacher_id']), 'Unknown')
+        }
+
+    result = []
+    for log in logs:
+        session = sessions_map.get(str(log['session_id']))
+        cls_info = classes_map.get(str(session['class_id']), {'name': 'Unknown', 'faculty': 'Unknown'}) if session else {'name': 'Unknown', 'faculty': 'Unknown'}
+        result.append({
+            'log_id':       str(log['_id']),
+            'date':         session['date'].strftime('%Y-%m-%d') if session else '',
+            'time':         log['timestamp'].strftime('%H:%M'),
+            'subject':      cls_info['name'],
+            'faculty_name': cls_info['faculty'],
+            'status':       log['status'],
+            'marked_by':    log['marked_by'],
+            'confidence':   log.get('confidence'),
+        })
+
+    return {'total': total, 'page': page, 'limit': limit, 'sessions': result}

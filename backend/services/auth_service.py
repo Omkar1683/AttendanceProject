@@ -28,16 +28,27 @@ def login(email: str, password: str) -> dict:
         return {'ok': False, 'message': 'Invalid password', 'code': 401}
 
     token = generate_token(str(user['_id']), user['email'], user['role'])
+    # Enrich with student-specific fields (roll_no may live in users or students doc)
+    user_id_str = str(user['_id'])
+    from bson import ObjectId as _ObjId
+    student_doc = db['students'].find_one({'user_id': _ObjId(user_id_str)})
+
     return {
         'ok': True,
         'token': token,
         'user': {
-            'id':    str(user['_id']),
-            'name':  user['name'],
-            'email': user['email'],
-            'role':  user['role'],
+            'id':         user_id_str,
+            'name':       user['name'],
+            'email':      user['email'],
+            'role':       user['role'],
+            'department': user.get('department') or (student_doc.get('department', '') if student_doc else ''),
+            'roll_no':    user.get('roll_no') or (student_doc.get('roll_no', '') if student_doc else ''),
+            'batch':      student_doc.get('batch', '') if student_doc else '',
+
         },
     }
+
+
 
 
 def signup(data: dict) -> dict:
@@ -109,7 +120,97 @@ def register_student(data: dict) -> dict:
     return {'ok': False, 'message': 'Registration failed', 'code': 500}
 
 
+
+def get_student_profile(user_id: str) -> dict:
+    """
+    Return a merged profile for a student user.
+    Joins `users` doc (auth info) with `students` doc (face + academic info).
+    Returns dict or empty dict if not found.
+    """
+    db = get_db()
+    models = get_models(db)
+
+    user = models['users'].find_by_id(user_id)
+    if not user:
+        return {}
+
+    # Look up the matching students document by user_id FK, with email fallback
+    from bson import ObjectId
+    student = db['students'].find_one({'user_id': ObjectId(user_id)})
+    if not student:
+        student = db['students'].find_one({'email': user['email'].lower()})
+
+    profile = {
+        'user_id':    str(user['_id']),
+        'name':       user.get('name', ''),
+        'email':      user.get('email', ''),
+        'role':       user.get('role', 'student'),
+        'department': user.get('department', ''),
+        'phone':      user.get('phone', ''),
+        'roll_no':    user.get('roll_no', ''),
+        'created_at': user['created_at'].isoformat() if user.get('created_at') else None,
+    }
+
+    if student:
+        profile['student_id'] = str(student['_id'])
+        # Fill in from students doc if not already in users doc
+        if not profile['roll_no']:
+            profile['roll_no'] = student.get('roll_no', '')
+        if not profile['department']:
+            profile['department'] = student.get('department', '')
+        profile['batch'] = student.get('batch', '')
+
+    return profile
+
+
+def update_student_profile(user_id: str, data: dict) -> dict:
+    """
+    Update allowed profile fields for a student.
+    Only name, phone, department are editable.
+    Returns {'ok': True} or {'ok': False, 'message': str, 'code': int}.
+    """
+    db = get_db()
+    models = get_models(db)
+
+    fields = {k: v for k, v in data.items() if k in ('name', 'phone', 'department') and v}
+    if not fields:
+        return {'ok': False, 'message': 'No updatable fields provided', 'code': 400}
+
+    updated = models['users'].update_profile(user_id, fields)
+    if updated:
+        return {'ok': True}
+    # update_one returns False when modified_count==0 (possibly same data)
+    return {'ok': True}   # treat as success — idempotent
+
+
+def change_password(user_id: str, old_password: str, new_password: str) -> dict:
+    """
+    Verify old password then replace with a new bcrypt hash.
+    Returns {'ok': True} or {'ok': False, 'message': str, 'code': int}.
+    """
+    db = get_db()
+    models = get_models(db)
+
+    if not old_password or not new_password:
+        return {'ok': False, 'message': 'Both old and new password are required', 'code': 400}
+
+    if len(new_password) < 8:
+        return {'ok': False, 'message': 'New password must be at least 8 characters', 'code': 400}
+
+    user = models['users'].find_by_id(user_id)
+    if not user:
+        return {'ok': False, 'message': 'User not found', 'code': 404}
+
+    if not verify_password(old_password, user['password']):
+        return {'ok': False, 'message': 'Current password is incorrect', 'code': 401}
+
+    new_hash = hash_password(new_password)
+    models['users'].update_password(user_id, new_hash)
+    return {'ok': True}
+
+
 def get_classes(teacher_id: str = None) -> list:
+
     """Return class list, optionally filtered by teacher."""
     db = get_db()
     models = get_models(db)
@@ -131,8 +232,6 @@ def get_classes(teacher_id: str = None) -> list:
         }
         for c in classes
     ]
-
-
 def create_class(
     teacher_id: str,
     name: str,

@@ -6,6 +6,7 @@ import * as Sharing from 'expo-sharing';
 // Backend server URL - ensure your mobile device is on the same network
 const BASE_URL = 'http://10.243.206.70:5000';
 
+
 const getHeaders = async () => {
     const token = await AsyncStorage.getItem('userToken');
     const headers = {
@@ -56,7 +57,7 @@ export const api = {
         return response.json();
     },
 
-    // ── NEW: Create Subject/Class ──────────────────────────────────────────────
+    // ── NEW: Create Subject/Class ─────────────────────────────────────────────────
     createClass: async ({ name, code, total_students, batch, department, schedule }) => {
         const headers = await getHeaders();
         const response = await fetch(`${BASE_URL}/classes/create`, {
@@ -66,6 +67,7 @@ export const api = {
         });
         return response.json();
     },
+
 
     getTodayAnalytics: async (classId) => {
         const headers = await getHeaders();
@@ -113,7 +115,34 @@ export const api = {
         return response.json();
     },
 
-    // ── NEW: Manual Attendance Edit ───────────────────────────────────────────
+    // ── Student self-service ─────────────────────────────────────────────────────────
+    getStudentProfile: async () => {
+        const headers = await getHeaders();
+        const response = await fetch(`${BASE_URL}/student/profile`, { headers });
+        return response.json();
+    },
+
+    updateStudentProfile: async (data) => {
+        const headers = await getHeaders();
+        const response = await fetch(`${BASE_URL}/student/profile`, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify(data),
+        });
+        return response.json();
+    },
+
+    changePassword: async (old_password, new_password) => {
+        const headers = await getHeaders();
+        const response = await fetch(`${BASE_URL}/student/change-password`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ old_password, new_password }),
+        });
+        return response.json();
+    },
+
+    // ── NEW: Manual Attendance Edit ─────────────────────────────────────────────────
     manualAttendance: async (studentId, sessionId, status) => {
         const headers = await getHeaders();
         const response = await fetch(`${BASE_URL}/attendance/manual`, {
@@ -128,7 +157,7 @@ export const api = {
         return response.json();
     },
 
-    // ── NEW: CSV Download & Share ─────────────────────────────────────────────
+    // ── NEW: CSV Download & Share ─────────────────────────────────────────────────────
     downloadAndShareCSV: async (classId, month, year, className) => {
         const token = await AsyncStorage.getItem('userToken');
         const url = `${BASE_URL}/reports/export-csv?class_id=${classId}&month=${month}&year=${year}`;
@@ -158,6 +187,24 @@ export const api = {
         }
 
         return downloadResult.uri;
+    },
+
+    getStudentTimeline: async (month, year) => {
+        const headers = await getHeaders();
+        const response = await fetch(
+            `${BASE_URL}/student/timeline?month=${month}&year=${year}`,
+            { headers }
+        );
+        return response.json();
+    },
+
+    getStudentSessions: async (page = 1, limit = 15) => {
+        const headers = await getHeaders();
+        const response = await fetch(
+            `${BASE_URL}/student/sessions?page=${page}&limit=${limit}`,
+            { headers }
+        );
+        return response.json();
     },
 
     // Notifications

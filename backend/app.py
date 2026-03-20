@@ -34,6 +34,7 @@ from routes.session_routes      import session_bp
 from routes.attendance_routes   import attendance_bp
 from routes.analytics_routes    import analytics_bp
 from routes.notification_routes import notification_bp
+from routes.student_routes      import student_bp
 
 
 def create_app(config_name: str = None) -> Flask:
@@ -73,6 +74,7 @@ def create_app(config_name: str = None) -> Flask:
     app.register_blueprint(attendance_bp)     # /scan, /attendance/manual
     app.register_blueprint(analytics_bp)      # /analytics/*, /reports/*
     app.register_blueprint(notification_bp)   # /notifications/send
+    app.register_blueprint(student_bp)        # /student/* (self-service student APIs)
 
     return app
 
