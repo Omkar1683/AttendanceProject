@@ -22,6 +22,7 @@ Environment variables:
 import os
 from flask import Flask
 from flask_cors import CORS
+from flask_mail import Mail
 
 from core.config import get_config
 from core.security import init_security
@@ -35,6 +36,7 @@ from routes.attendance_routes   import attendance_bp
 from routes.analytics_routes    import analytics_bp
 from routes.notification_routes import notification_bp
 from routes.student_routes      import student_bp
+mail = Mail()
 
 
 def create_app(config_name: str = None) -> Flask:
@@ -46,11 +48,18 @@ def create_app(config_name: str = None) -> Flask:
                      Falls back to APP_ENV env var, then 'development'.
     """
     app = Flask(__name__)
-    CORS(app)
+    CORS(
+        app,
+        expose_headers=["Content-Disposition", "Content-Type"],
+        supports_credentials=True,
+    )
 
     # ── Load config ───────────────────────────────────────────────────────────
     Config = get_config(config_name)
     app.config.from_object(Config)
+
+    # ── Initialize Mail ───────────────────────────────────────────────────────
+    mail.init_app(app)
 
     # ── Boot security layer ───────────────────────────────────────────────────
     init_security(

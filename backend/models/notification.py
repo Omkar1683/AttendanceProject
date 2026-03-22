@@ -20,11 +20,16 @@ class NotificationModel(BaseModel):
             "required": ["class_id", "target", "message", "sent_by", "created_at"],
             "properties": {
                 "class_id":   {"bsonType": "objectId"},
-                "target":     {"enum": ["all", "defaulters", "critical"]},
+                "target":     {"enum": ["all", "defaulters", "critical", "individual"]},
                 "message":    {"bsonType": "string", "minLength": 1},
                 "sent_by":    {"bsonType": "objectId"},
                 "created_at": {"bsonType": "date"},
                 "read":       {"bsonType": "bool"},
+                "student_id": {"bsonType": "objectId"},
+                "recipients": {
+                    "bsonType": "array",
+                    "items": {"bsonType": "string"}
+                }
             },
         }
     }
@@ -38,6 +43,8 @@ class NotificationModel(BaseModel):
         target: str,
         message: str,
         sent_by: str,
+        student_id: Optional[str] = None,
+        recipients: Optional[List[str]] = None,
     ) -> Optional[str]:
         doc = {
             'class_id':   ObjectId(class_id),
@@ -47,6 +54,11 @@ class NotificationModel(BaseModel):
             'created_at': datetime.now(),
             'read':       False,
         }
+        if student_id:
+            doc['student_id'] = ObjectId(student_id)
+        if recipients is not None:
+            doc['recipients'] = recipients
+            
         return self.insert_one(doc)
 
     def find_by_class(self, class_id: str, limit: int = 50) -> List[Dict]:

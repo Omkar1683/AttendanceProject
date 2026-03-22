@@ -1,10 +1,10 @@
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
+import { File, Directory, Paths } from 'expo-file-system/next';
 import * as Sharing from 'expo-sharing';
 
 // Backend server URL - ensure your mobile device is on the same network
-const BASE_URL = 'http://10.243.206.70:5000';
+const BASE_URL = 'http://192.168.29.57:5000';
 
 
 const getHeaders = async () => {
@@ -157,36 +157,93 @@ export const api = {
         return response.json();
     },
 
-    // ── NEW: CSV Download & Share ─────────────────────────────────────────────────────
+    // ── CSV Download & Share ──────────────────────────────────────────────────────────
+    // SDK 54+: uses new File class from expo-file-system/next.
+    // Old APIs (downloadAsync, writeAsStringAsync) are fully deprecated in SDK 54.
     downloadAndShareCSV: async (classId, month, year, className) => {
         const token = await AsyncStorage.getItem('userToken');
-        const url = `${BASE_URL}/reports/export-csv?class_id=${classId}&month=${month}&year=${year}`;
-        const fileName = `attendance_${className || 'report'}_${month}_${year}.csv`
-            .replace(/\s+/g, '_');
-        const localUri = FileSystem.documentDirectory + fileName;
 
-        // Download the file with auth header
-        const downloadResult = await FileSystem.downloadAsync(url, localUri, {
-            headers: { Authorization: `Bearer ${token}` },
+        if (!token) {
+            throw new Error('Authentication token missing. Please log in again.');
+        }
+        if (!classId) {
+            throw new Error('Class ID is required to export the report.');
+        }
+
+        const url = `${BASE_URL}/reports/export-csv?class_id=${classId}&month=${month}&year=${year}`;
+        const safeClassName = (className || 'report').replace(/\s+/g, '_');
+        const fileName = `attendance_${safeClassName}_${month}_${year}.csv`;
+
+        // ── Step 1: Fetch CSV from backend ────────────────────────────────────
+        let response;
+        try {
+            response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: 'text/csv, application/json',
+                },
+            });
+        } catch (networkError) {
+            throw new Error(
+                `Network error — make sure your device and the server are on the same Wi-Fi network.\nDetails: ${networkError.message}`
+            );
+        }
+
+        // ── Step 2: Validate HTTP status ──────────────────────────────────────
+        if (!response.ok) {
+            let serverMsg = `HTTP ${response.status}`;
+            try {
+                const errBody = await response.json();
+                serverMsg = errBody.message || serverMsg;
+            } catch (_) { /* ignore */ }
+            throw new Error(`Download failed: ${serverMsg}`);
+        }
+
+        // ── Step 3: Read response as text ─────────────────────────────────────
+        const csvText = await response.text();
+
+        if (!csvText || csvText.trim().length === 0) {
+            throw new Error('Server returned an empty file. No attendance data found for the selected period.');
+        }
+
+        // Guard: detect if server accidentally returned a JSON error body
+        if (csvText.trim().startsWith('{') || csvText.trim().startsWith('[')) {
+            let msg = 'Server returned an error instead of a CSV file.';
+            try {
+                const parsed = JSON.parse(csvText);
+                msg = parsed.message || msg;
+            } catch (_) { /* ignore */ }
+            throw new Error(msg);
+        }
+
+        // ── Step 4: Save using NEW File API (expo-file-system/next) ───────────
+        // Paths.document is the app's document directory (persistent, shareable)
+        const csvFile = new File(Paths.document, fileName);
+        try {
+            csvFile.write(csvText);
+        } catch (writeError) {
+            throw new Error(`Failed to save file: ${writeError.message}`);
+        }
+
+        // ── Step 5: Verify file was written ──────────────────────────────────
+        if (!csvFile.exists || csvFile.size === 0) {
+            throw new Error('File was saved but appears to be empty. Please try again.');
+        }
+
+        // ── Step 6: Open native share dialog ─────────────────────────────────
+        const canShare = await Sharing.isAvailableAsync();
+        if (!canShare) {
+            throw new Error('Sharing is not available on this device.');
+        }
+
+        await Sharing.shareAsync(csvFile.uri, {
+            mimeType: 'text/csv',
+            dialogTitle: `Share ${fileName}`,
+            UTI: 'public.comma-separated-values-text', // iOS only
         });
 
-        if (downloadResult.status !== 200) {
-            throw new Error(`Download failed with status ${downloadResult.status}`);
-        }
-
-        // Share the downloaded file
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare) {
-            await Sharing.shareAsync(downloadResult.uri, {
-                mimeType: 'text/csv',
-                dialogTitle: `Share ${fileName}`,
-                UTI: 'public.comma-separated-values-text',
-            });
-        } else {
-            throw new Error('Sharing is not available on this device');
-        }
-
-        return downloadResult.uri;
+        return csvFile.uri;
     },
 
     getStudentTimeline: async (month, year) => {
@@ -208,12 +265,12 @@ export const api = {
     },
 
     // Notifications
-    sendNotification: async (classId, target, message) => {
+    sendNotification: async (classId, target, message, studentId = null) => {
         const headers = await getHeaders();
         const response = await fetch(`${BASE_URL}/notifications/send`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ class_id: classId, target, message }),
+            body: JSON.stringify({ class_id: classId, target, message, student_id: studentId }),
         });
         return response.json();
     },

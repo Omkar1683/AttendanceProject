@@ -1691,15 +1691,42 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
 const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
   const [target, setTarget] = useState('defaulters');
   const [message, setMessage] = useState('Dear Student, your attendance is below the required threshold. Please meet the HOD immediately.');
+  const [studentId, setStudentId] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleSend = async () => {
+    // Validation
+    if (!selectedClass?.id) {
+      Alert.alert('Error', 'No class selected. Please go back to dashboard and select a class.');
+      return;
+    }
+    if (!message.trim()) {
+      Alert.alert('Error', 'Notification message cannot be empty.');
+      return;
+    }
+    if (target === 'individual' && !studentId.trim()) {
+      Alert.alert('Error', 'Please enter a valid Student Database ID intended for this notification.');
+      return;
+    }
+
+    setLoading(true);
     try {
-      const result = await api.sendNotification(selectedClass?.id, target, message);
+      const result = await api.sendNotification(
+        selectedClass?.id, 
+        target, 
+        message,
+        target === 'individual' ? studentId.trim() : null
+      );
       if (result.status === 'success') {
-        Alert.alert("Success", "Notifications sent successfully!");
+        Alert.alert("Success", result.message || "Notifications sent successfully!");
+        setStudentId('');
+      } else {
+        Alert.alert("Error", result.message || "Failed to send notifications.");
       }
     } catch (error) {
-      Alert.alert("Error", "Failed to send notifications");
+      Alert.alert("Error", error.message || "Network error. Failed to send notifications.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1742,13 +1769,26 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
               <Text style={{ fontSize: 10, color: '#6b7280' }}>General Notice</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.gridItem, target === 'select' && { backgroundColor: '#f3f4f6', borderColor: '#d1d5db' }]}
-              onPress={() => setTarget('select')}
+              style={[styles.gridItem, target === 'individual' && { backgroundColor: '#f3f4f6', borderColor: '#d1d5db' }]}
+              onPress={() => setTarget('individual')}
             >
-              <Text style={{ color: '#374151', fontWeight: 'bold' }}>👤 Select</Text>
-              <Text style={{ fontSize: 10, color: '#6b7280' }}>Individual</Text>
+              <Text style={{ color: '#374151', fontWeight: 'bold' }}>👤 Individual</Text>
+              <Text style={{ fontSize: 10, color: '#6b7280' }}>Single Student</Text>
             </TouchableOpacity>
           </View>
+          
+          {target === 'individual' && (
+            <View style={[styles.inputGroup, { marginTop: 12, marginBottom: 0 }]}>
+              <Text style={styles.label}>Student ID</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter Student MongoDB ObjectId"
+                placeholderTextColor="#9ca3af"
+                value={studentId}
+                onChangeText={setStudentId}
+              />
+            </View>
+          )}
         </View>
 
         <View style={styles.card}>
@@ -1765,8 +1805,13 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
         <TouchableOpacity
           style={[styles.primaryButton, { backgroundColor: '#4f46e5' }]}
           onPress={handleSend}
+          disabled={loading}
         >
-          <Text style={styles.primaryButtonText}>Send Notification</Text>
+          {loading ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text style={styles.primaryButtonText}>Send Notification</Text>
+          )}
         </TouchableOpacity>
       </ScrollView>
     </View>

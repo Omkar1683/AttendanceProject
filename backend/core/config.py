@@ -42,6 +42,14 @@ class BaseConfig:
     # CORS
     CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')
 
+    # Mail
+    MAIL_SERVER   = 'smtp.gmail.com'
+    MAIL_PORT     = 587
+    MAIL_USE_TLS  = True
+    MAIL_USERNAME = os.getenv('MAIL_USERNAME')   # Gmail address
+    MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')   # Gmail App Password
+    MAIL_DEFAULT_SENDER = os.getenv('MAIL_USERNAME')
+
 
 class DevelopmentConfig(BaseConfig):
     DEBUG = True
