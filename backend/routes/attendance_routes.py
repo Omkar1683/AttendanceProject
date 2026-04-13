@@ -48,3 +48,32 @@ def manual_attendance():
     if result['ok']:
         return jsonify({'status': 'success', 'message': 'Updated'})
     return jsonify({'status': 'error', 'message': result['message']}), result['code']
+
+
+# ── /attendance/by-date  (GET) ────────────────────────────────────────────────
+# Returns all enrolled students + their Present/Absent status for a given date.
+# Query params: class_id=<id>&date=YYYY-MM-DD
+
+@attendance_bp.route('/attendance/by-date', methods=['GET'])
+@token_required
+def attendance_by_date():
+    class_id = request.args.get('class_id', '').strip()
+    date_str = request.args.get('date', '').strip()
+
+    if not class_id:
+        return jsonify({'status': 'error', 'message': 'class_id is required'}), 400
+    if not date_str:
+        return jsonify({'status': 'error', 'message': 'date (YYYY-MM-DD) is required'}), 400
+
+    result = att_svc.get_attendance_by_date(class_id, date_str)
+
+    if not result.get('ok'):
+        return jsonify({'status': 'error', 'message': result.get('message', 'Failed')}), result.get('code', 400)
+
+    return jsonify({
+        'status':   'success',
+        'date':     result['date'],
+        'sessions': result['sessions'],
+        'students': result['students'],
+    })
+

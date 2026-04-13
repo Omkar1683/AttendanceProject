@@ -186,38 +186,29 @@ const LoginScreen = ({ navigateTo, userRole, setUserRole, onLogin }) => {
   );
 };
 
-// --- 2. SIGNUP SCREEN ---
+// --- 2. SIGNUP SCREEN (Teacher accounts only) ---
 const SignupScreen = ({ navigateTo }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState('teacher');
   const [department, setDepartment] = useState('');
-  const [rollNo, setRollNo] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSignup = async () => {
-    if (!email || !password || !name || !department) {
-      Alert.alert('Error', 'Please fill all required fields');
+    if (!email || !password || !name) {
+      Alert.alert('Error', 'Name, email and password are required');
       return;
     }
-
-    if (role === 'student' && !rollNo) {
-      Alert.alert('Error', 'Roll number is required for students');
+    if (password.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters');
       return;
     }
 
     setLoading(true);
     try {
-      const result = await api.signup(
-        email,
-        password,
-        name,
-        role,
-        department,
-        role === 'student' ? rollNo : null
-      );
-      Alert.alert('Success', 'Account created successfully!', [
+      // Role is always 'teacher' — students are created by teachers via Register Student
+      await api.signup(email, password, name, department);
+      Alert.alert('Success', 'Teacher account created successfully!', [
         { text: 'OK', onPress: () => navigateTo('Login') }
       ]);
     } catch (error) {
@@ -238,7 +229,13 @@ const SignupScreen = ({ navigateTo }) => {
         </TouchableOpacity>
 
         <Text style={styles.appTitle}>Create Account</Text>
-        <Text style={styles.appSubtitle}>Sign up for AttendAI</Text>
+        <Text style={styles.appSubtitle}>Teacher Registration — AttendAI</Text>
+
+        <View style={[styles.card, { backgroundColor: '#eff6ff', borderColor: '#bfdbfe', marginBottom: 20 }]}>
+          <Text style={{ color: '#1d4ed8', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+            🎓 This page is for Teacher accounts only.{`\n`}Students are added by teachers via "Register Student".
+          </Text>
+        </View>
 
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Full Name *</Text>
@@ -265,7 +262,7 @@ const SignupScreen = ({ navigateTo }) => {
         </View>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>Password *</Text>
+          <Text style={styles.label}>Password * (min 8 characters)</Text>
           <TextInput
             style={styles.input}
             placeholder="••••••••"
@@ -277,7 +274,7 @@ const SignupScreen = ({ navigateTo }) => {
         </View>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>Department *</Text>
+          <Text style={styles.label}>Department</Text>
           <TextInput
             style={styles.input}
             placeholder="e.g., MCA, Computer Science"
@@ -287,37 +284,6 @@ const SignupScreen = ({ navigateTo }) => {
           />
         </View>
 
-        <View style={styles.roleContainer}>
-          <Text style={styles.helperText}>Register as:</Text>
-          <View style={styles.roleToggle}>
-            <TouchableOpacity
-              style={[styles.roleButton, role === 'teacher' && styles.roleButtonActive]}
-              onPress={() => setRole('teacher')}
-            >
-              <Text style={[styles.roleText, role === 'teacher' && styles.roleTextActive]}>Teacher</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.roleButton, role === 'student' && styles.roleButtonActive]}
-              onPress={() => setRole('student')}
-            >
-              <Text style={[styles.roleText, role === 'student' && styles.roleTextActive]}>Student</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {role === 'student' && (
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Roll Number *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., MCA001"
-              placeholderTextColor="#9ca3af"
-              value={rollNo}
-              onChangeText={setRollNo}
-            />
-          </View>
-        )}
-
         <TouchableOpacity
           style={styles.primaryButton}
           onPress={handleSignup}
@@ -326,7 +292,7 @@ const SignupScreen = ({ navigateTo }) => {
           {loading ? (
             <ActivityIndicator color="white" />
           ) : (
-            <Text style={styles.primaryButtonText}>Create Account</Text>
+            <Text style={styles.primaryButtonText}>Create Teacher Account</Text>
           )}
         </TouchableOpacity>
       </ScrollView>
@@ -347,10 +313,13 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
   const [showAddSubject, setShowAddSubject] = useState(false);
   const [newSubjectName, setNewSubjectName] = useState('');
   const [newSubjectCode, setNewSubjectCode] = useState('');
-  const [newSubjectStudents, setNewSubjectStudents] = useState('');
   const [newSubjectBatch, setNewSubjectBatch] = useState('');
   const [newSubjectDept, setNewSubjectDept] = useState('');
   const [addingSubject, setAddingSubject] = useState(false);
+  // Student multi-select state
+  const [availableStudents, setAvailableStudents] = useState([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -418,14 +387,31 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
     setShowClassPicker(false);
   };
 
+  const loadStudentsForPicker = async () => {
+    setStudentsLoading(true);
+    try {
+      const result = await api.getStudents();
+      if (result.status === 'success') {
+        setAvailableStudents(result.data || []);
+      }
+    } catch (err) {
+      console.warn('Could not load students:', err.message);
+    } finally {
+      setStudentsLoading(false);
+    }
+  };
+
+  const toggleStudentSelection = (studentId) => {
+    setSelectedStudentIds(prev =>
+      prev.includes(studentId)
+        ? prev.filter(id => id !== studentId)
+        : [...prev, studentId]
+    );
+  };
+
   const handleAddSubject = async () => {
     if (!newSubjectName.trim() || !newSubjectCode.trim()) {
       Alert.alert('Validation Error', 'Subject Name and Code are required.');
-      return;
-    }
-    const totalStudents = parseInt(newSubjectStudents, 10);
-    if (isNaN(totalStudents) || totalStudents < 1) {
-      Alert.alert('Validation Error', 'Enter a valid number of students (≥ 1).');
       return;
     }
     setAddingSubject(true);
@@ -433,21 +419,21 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
       const result = await api.createClass({
         name: newSubjectName.trim(),
         code: newSubjectCode.trim().toUpperCase(),
-        total_students: totalStudents,
+        student_ids: selectedStudentIds,
         batch: newSubjectBatch.trim() || undefined,
         department: newSubjectDept.trim() || undefined,
       });
       if (result.status === 'success') {
-        Alert.alert('Success', `Subject "${newSubjectName}" created!`);
+        Alert.alert('Success', `Subject "${newSubjectName}" created with ${selectedStudentIds.length} student(s)!`);
         // Reset form
         setNewSubjectName(''); setNewSubjectCode('');
-        setNewSubjectStudents(''); setNewSubjectBatch(''); setNewSubjectDept('');
+        setNewSubjectBatch(''); setNewSubjectDept('');
+        setSelectedStudentIds([]);
         setShowAddSubject(false);
         // Reload class dropdown
         const classesResult = await api.getClasses(userInfo.id);
         if (classesResult.status === 'success') {
           setClasses(classesResult.data);
-          // Auto-select newly created class
           const newClass = classesResult.data.find(c => c.id === result.class_id);
           if (newClass) setSelectedClassId(newClass.id);
         }
@@ -526,11 +512,12 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
         transparent={true}
         animationType="slide"
         onRequestClose={() => setShowAddSubject(false)}
+        onShow={loadStudentsForPicker}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+          <View style={[styles.modalContent, { maxHeight: '92%' }]}>
             <Text style={styles.modalTitle}>➕ Add New Subject</Text>
-            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+            <ScrollView style={{ maxHeight: 480 }} showsVerticalScrollIndicator={false}>
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Subject Name *</Text>
                 <TextInput
@@ -553,17 +540,6 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
                 />
               </View>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Total Students *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 60"
-                  placeholderTextColor="#9ca3af"
-                  value={newSubjectStudents}
-                  onChangeText={setNewSubjectStudents}
-                  keyboardType="number-pad"
-                />
-              </View>
-              <View style={styles.inputGroup}>
                 <Text style={styles.label}>Batch</Text>
                 <TextInput
                   style={styles.input}
@@ -583,6 +559,59 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
                   onChangeText={setNewSubjectDept}
                 />
               </View>
+
+              {/* ── Student Multi-Select ─────────────────────────────── */}
+              <View style={styles.inputGroup}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={styles.label}>Assign Students</Text>
+                  <Text style={{ fontSize: 12, color: '#2563eb', fontWeight: '600' }}>
+                    {selectedStudentIds.length} selected
+                  </Text>
+                </View>
+                {studentsLoading ? (
+                  <ActivityIndicator color="#2563eb" />
+                ) : availableStudents.length === 0 ? (
+                  <Text style={{ color: '#9ca3af', fontSize: 13, fontStyle: 'italic', textAlign: 'center', padding: 12 }}>
+                    No students registered yet.
+                  </Text>
+                ) : (
+                  <View style={{ borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, overflow: 'hidden', maxHeight: 200 }}>
+                    <ScrollView nestedScrollEnabled={true}>
+                      {availableStudents.map((student) => {
+                        const isSelected = selectedStudentIds.includes(student.id);
+                        return (
+                          <TouchableOpacity
+                            key={student.id}
+                            style={[{
+                              flexDirection: 'row', alignItems: 'center',
+                              padding: 10, borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+                              backgroundColor: isSelected ? '#eff6ff' : '#fff',
+                            }]}
+                            onPress={() => toggleStudentSelection(student.id)}
+                          >
+                            <View style={[{
+                              width: 20, height: 20, borderRadius: 4, borderWidth: 2,
+                              marginRight: 10, alignItems: 'center', justifyContent: 'center',
+                              borderColor: isSelected ? '#2563eb' : '#d1d5db',
+                              backgroundColor: isSelected ? '#2563eb' : '#fff',
+                            }]}>
+                              {isSelected && <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>✓</Text>}
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1f2937' }}>
+                                {student.name}
+                              </Text>
+                              <Text style={{ fontSize: 11, color: '#6b7280' }}>
+                                {student.email || student.roll_no}{student.batch ? ` • ${student.batch}` : ''}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
             </ScrollView>
             <TouchableOpacity
               style={[styles.primaryButton, { marginTop: 12 }]}
@@ -592,12 +621,14 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
               {addingSubject ? (
                 <ActivityIndicator color="white" />
               ) : (
-                <Text style={styles.primaryButtonText}>✓ Create Subject</Text>
+                <Text style={styles.primaryButtonText}>
+                  ✓ Create Subject{selectedStudentIds.length > 0 ? ` (${selectedStudentIds.length} students)` : ''}
+                </Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.modalCloseButton, { marginTop: 8 }]}
-              onPress={() => setShowAddSubject(false)}
+              onPress={() => { setShowAddSubject(false); setSelectedStudentIds([]); }}
             >
               <Text style={styles.modalCloseButtonText}>Cancel</Text>
             </TouchableOpacity>
@@ -718,7 +749,7 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.sectionTitle}>Defaulter List (Top 5)</Text>
-              <TouchableOpacity onPress={() => navigateTo('NotificationHub')}>
+              <TouchableOpacity onPress={() => { setSelectedClass(selectedClassData); navigateTo('NotificationHub'); }}>
                 <Text style={styles.linkText}>Notify All</Text>
               </TouchableOpacity>
             </View>
@@ -734,7 +765,7 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
 
             <TouchableOpacity
               style={styles.outlineButton}
-              onPress={() => navigateTo('NotificationHub')}
+              onPress={() => { setSelectedClass(selectedClassData); navigateTo('NotificationHub'); }}
             >
               <Text style={styles.outlineButtonText}>🚨 Send Notifications</Text>
             </TouchableOpacity>
@@ -1004,21 +1035,102 @@ const RegisterStudentScreen = ({ navigateTo }) => {
   );
 };
 
-// --- 5. SCAN ATTENDANCE (WITH BACKEND LOGIC) ---
+// --- 5. SCAN ATTENDANCE (INTERVAL-BASED VIDEO MODE) ---
 const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
   const [permission, requestPermission] = useCameraPermissions();
-  const [photo, setPhoto] = useState(null);
-  const [status, setStatus] = useState("Searching for Faces...");
-  const [scanResult, setScanResult] = useState(null);
-  const [facing, setFacing] = useState("back");
-  const [scannedCount, setScannedCount] = useState(0);
-  const cameraRef = useRef(null);
+  const [isScanning, setIsScanning]         = useState(false);
+  const [scanStatus, setScanStatus]         = useState('Ready · Press Start');
+  const [statusType, setStatusType]         = useState('idle');
+  const [markedStudents, setMarkedStudents] = useState([]);
+  const [facing, setFacing]                 = useState('back');
+  const [isUploading, setIsUploading]       = useState(false);
+  const cameraRef       = useRef(null);
+  const scanIntervalRef = useRef(null);
+  const markedIdsRef    = useRef(new Set());
+  const uploadingRef    = useRef(false);
 
+  // ── All hooks must be unconditional — BEFORE any early returns ──────────────
+  // Clear interval on unmount
+  useEffect(() => {
+    return () => { if (scanIntervalRef.current) clearInterval(scanIntervalRef.current); };
+  }, []);
+
+  const startScanning = () => {
+    if (!currentSession) {
+      Alert.alert('No Session', 'Go back and start an attendance session first.');
+      return;
+    }
+    setIsScanning(true);
+    setScanStatus('Scanning…');
+    setStatusType('scanning');
+    scanIntervalRef.current = setInterval(captureAndScan, 2500);
+  };
+
+  const pauseScanning = () => {
+    if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; }
+    setIsScanning(false);
+    setScanStatus('Paused');
+    setStatusType('idle');
+  };
+
+  const captureAndScan = async () => {
+    if (uploadingRef.current || !cameraRef.current) return;
+    uploadingRef.current = true;
+    setIsUploading(true);
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.4, base64: false, skipProcessing: true });
+      const form = new FormData();
+      form.append('file', { uri: photo.uri, type: 'image/jpeg', name: 'frame.jpg' });
+      form.append('session_id', currentSession);
+      const res  = await fetch(`${api.BASE_URL}/scan`, { method: 'POST', body: form, headers: { 'Content-Type': 'multipart/form-data' } });
+      const data = await res.json();
+      if (data.status === 'error') {
+        setScanStatus(data.message === 'No faces detected' ? '👁  No face in frame' : `⚠ ${data.message}`);
+        setStatusType('error');
+        return;
+      }
+      if (data.people?.length > 0) {
+        data.people.forEach(person => {
+          if (person.name !== 'Unknown' && person.status === 'Present') {
+            if (!markedIdsRef.current.has(person.student_id)) {
+              markedIdsRef.current.add(person.student_id);
+              const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              setMarkedStudents(prev => [{ name: person.name, student_id: person.student_id, time }, ...prev]);
+              setScanStatus(`✅ Marked Present: ${person.name}`);
+              setStatusType('marked');
+            } else {
+              setScanStatus(`↩ Already marked: ${person.name}`);
+              setStatusType('detected');
+            }
+          } else if (person.name === 'Unknown') {
+            setScanStatus('❓ Unknown face');
+            setStatusType('unknown');
+          }
+        });
+      }
+    } catch { setScanStatus('⚠ Connection error'); setStatusType('error'); }
+    finally { uploadingRef.current = false; setIsUploading(false); }
+  };
+
+  const handleStopSession = async () => {
+    pauseScanning();
+    try {
+      await api.stopSession(currentSession);
+      Alert.alert('✅ Session Complete',
+        `${markedStudents.length} student${markedStudents.length !== 1 ? 's' : ''} marked present.`,
+        [{ text: 'Done', onPress: () => navigateTo('TeacherDashboard') }]);
+    } catch { Alert.alert('Error', 'Failed to stop session'); }
+  };
+
+  const S_COLOR = { idle: '#6b7280', scanning: '#2563eb', detected: '#16a34a', marked: '#059669', unknown: '#d97706', error: '#dc2626' };
+  const S_BG    = { idle: '#f3f4f6', scanning: '#eff6ff', detected: '#dcfce7', marked: '#d1fae5', unknown: '#fef3c7', error: '#fee2e2' };
+
+  // ── Early returns (after all hooks above) ─────────────────────────────────
   if (!permission) return <View />;
   if (!permission.granted) {
     return (
-      <View style={[styles.screenContainer, { justifyContent: 'center', alignItems: 'center' }]}>
-        <Text>Camera permission required</Text>
+      <View style={[styles.screenContainer, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+        <Text style={{ marginBottom: 16, textAlign: 'center' }}>Camera permission required.</Text>
         <TouchableOpacity style={styles.primaryButton} onPress={requestPermission}>
           <Text style={styles.primaryButtonText}>Grant Permission</Text>
         </TouchableOpacity>
@@ -1026,168 +1138,86 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
     );
   }
 
-  const toggleCameraFacing = () => {
-    setFacing(current => (current === 'back' ? 'front' : 'back'));
-  };
-
-  const takePicture = async () => {
-    if (cameraRef.current) {
-      try {
-        const photoData = await cameraRef.current.takePictureAsync({
-          quality: 0.5,
-          base64: false,
-        });
-        setPhoto(photoData.uri);
-        uploadImage(photoData.uri);
-      } catch (error) {
-        Alert.alert("Error", "Failed to capture image");
-      }
-    }
-  };
-
-  const uploadImage = async (imageUri) => {
-    setStatus("Analyzing...");
-    const formData = new FormData();
-    formData.append('file', {
-      uri: imageUri,
-      type: 'image/jpeg',
-      name: 'scan.jpg',
-    });
-    formData.append('session_id', currentSession);
-
-    try {
-      const response = await fetch(`${api.BASE_URL}/scan`, {
-        method: 'POST',
-        body: formData,
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      const result = await response.json();
-
-      if (result.status === 'error') {
-        setScanResult([{ name: "No Face Detected", status: 'Retry' }]);
-        setStatus(result.message || "No Face Detected");
-        return;
-      }
-
-      if (result.people && result.people.length > 0) {
-        // Process all detected people
-        const detectedPeople = result.people.map(person => {
-          if (person.name === "Unknown") {
-            return { name: "Unknown Face", status: 'Absent' };
-          } else {
-            return { name: person.name, status: 'Present' };
-          }
-        });
-
-        setScanResult(detectedPeople);
-
-        // Count how many were successfully identified
-        const identifiedCount = detectedPeople.filter(p => p.status === 'Present').length;
-        const unknownCount = detectedPeople.filter(p => p.status === 'Absent').length;
-
-        if (identifiedCount > 0) {
-          setStatus(`${identifiedCount} Student${identifiedCount > 1 ? 's' : ''} Verified`);
-          setScannedCount(prev => prev + identifiedCount);
-        } else {
-          setStatus("No Match Found");
-        }
-      }
-
-    } catch (error) {
-      setStatus("Connection Error");
-      Alert.alert("Error", "Check backend server");
-    }
-  };
-
-  const handleStopSession = async () => {
-    try {
-      await api.stopSession(currentSession);
-      Alert.alert("Success", `Session stopped. ${scannedCount} students scanned.`, [
-        { text: "OK", onPress: () => navigateTo('TeacherDashboard') }
-      ]);
-    } catch (error) {
-      Alert.alert("Error", "Failed to stop session");
-    }
-  };
-
   return (
-    <View style={[styles.screenContainer, { backgroundColor: '#111827' }]}>
-      <View style={[styles.header, { backgroundColor: '#1f2937', borderBottomWidth: 0 }]}>
-        <TouchableOpacity
-          onPress={() => navigateTo('TeacherDashboard')}
-          style={{ padding: 10, marginRight: 8 }}
-        >
+    <View style={[styles.screenContainer, { backgroundColor: '#0f172a' }]}>
+      {/* Header */}
+      <View style={[styles.header, { backgroundColor: '#1e293b', borderBottomWidth: 0 }]}>
+        <TouchableOpacity onPress={() => navigateTo('TeacherDashboard')} style={{ padding: 10, marginRight: 8 }}>
           <ChevronLeft color="white" size={30} />
         </TouchableOpacity>
         <View style={{ alignItems: 'center', flex: 1 }}>
-          <Text style={[styles.headerTitle, { color: 'white' }]}>Scanning Attendance</Text>
-          <Text style={{ color: '#9ca3af', fontSize: 10 }}>{status} • Scanned: {scannedCount}</Text>
+          <Text style={[styles.headerTitle, { color: 'white' }]}>Video Attendance</Text>
+          <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 1 }}>
+            {isScanning ? '🔴 SCANNING' : '⏸ PAUSED'}  •  {markedStudents.length} marked present
+          </Text>
         </View>
-        <View style={styles.liveBadge}>
-          <Text style={styles.liveText}>LIVE</Text>
-        </View>
+        <View style={{ width: 50 }} />
       </View>
 
-      <View style={styles.cameraContainer}>
-        {photo ? (
-          <Image source={{ uri: photo }} style={styles.preview} />
-        ) : (
-          <CameraView style={styles.camera} facing={facing} ref={cameraRef}>
-            <View style={styles.overlay}>
-              <Text style={styles.overlayText}>[ Face Here ]</Text>
+      {/* Camera Preview */}
+      <View style={{ flex: 1, margin: 12, borderRadius: 20, overflow: 'hidden', borderWidth: 2, borderColor: isScanning ? '#22c55e' : '#334155' }}>
+        <CameraView style={{ flex: 1 }} facing={facing} ref={cameraRef}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ width: 200, height: 240, borderRadius: 16, borderWidth: 2, borderStyle: 'dashed',
+              borderColor: isScanning ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.25)',
+              justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 12 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>
+                {isScanning ? 'Keep faces in frame' : 'Press Start to begin'}
+              </Text>
             </View>
-            <TouchableOpacity style={styles.flipBtn} onPress={toggleCameraFacing}>
-              <Text style={{ color: 'white' }}>Flip</Text>
-            </TouchableOpacity>
-          </CameraView>
-        )}
+          </View>
+          <TouchableOpacity
+            style={{ position: 'absolute', bottom: 14, right: 14, backgroundColor: 'rgba(0,0,0,0.55)', padding: 8, borderRadius: 8 }}
+            onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}
+          >
+            <Text style={{ color: 'white', fontSize: 12 }}>🔄 Flip</Text>
+          </TouchableOpacity>
+          {isUploading && (
+            <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: 'rgba(37,99,235,0.85)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, flexDirection: 'row', alignItems: 'center' }}>
+              <ActivityIndicator size="small" color="white" style={{ marginRight: 6 }} />
+              <Text style={{ color: 'white', fontSize: 11, fontWeight: '600' }}>Analyzing…</Text>
+            </View>
+          )}
+        </CameraView>
       </View>
 
-      {/* Result Cards */}
-      <View style={{ padding: 16 }}>
-        {scanResult && Array.isArray(scanResult) && scanResult.length > 0 && (
-          <>
-            {scanResult.map((person, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.resultCard,
-                  person.status === 'Present' ? styles.bgGreen : styles.bgRed,
-                  { marginBottom: 8 }
-                ]}
-              >
-                <Text style={styles.resultText}>{person.name}</Text>
-                <View style={styles.resultBadge}>
-                  <Text style={{ fontWeight: 'bold', color: 'white' }}>
-                    {person.status === 'Present' ? '✅ Present' : (person.status === 'Retry' ? '❌ Retry' : '❓ Absent')}
-                  </Text>
+      {/* Status Badge */}
+      <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: S_BG[statusType], padding: 10, borderRadius: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
+        {isScanning && statusType === 'scanning' && <ActivityIndicator size="small" color={S_COLOR[statusType]} style={{ marginRight: 8 }} />}
+        <Text style={{ color: S_COLOR[statusType], fontWeight: '700', fontSize: 14 }}>{scanStatus}</Text>
+      </View>
+
+      {/* Marked Students */}
+      <View style={{ marginHorizontal: 16, marginBottom: 8, maxHeight: 130 }}>
+        <Text style={{ color: '#94a3b8', fontSize: 10, fontWeight: '700', letterSpacing: 1, marginBottom: 6 }}>
+          MARKED PRESENT ({markedStudents.length})
+        </Text>
+        {markedStudents.length === 0
+          ? <Text style={{ color: '#475569', fontSize: 12, fontStyle: 'italic' }}>No students marked yet — start scanning.</Text>
+          : <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled>
+              {markedStudents.map((s, i) => (
+                <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1e293b', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, marginBottom: 4 }}>
+                  <Text style={{ color: '#22c55e', fontWeight: '600', fontSize: 13 }}>✅  {s.name}</Text>
+                  <Text style={{ color: '#64748b', fontSize: 11 }}>{s.time}</Text>
                 </View>
-              </View>
-            ))}
-          </>
-        )}
+              ))}
+            </ScrollView>
+        }
+      </View>
 
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          {photo ? (
-            <TouchableOpacity
-              style={[styles.primaryButton, { flex: 1 }]}
-              onPress={() => { setPhoto(null); setScanResult(null); setStatus("Searching..."); }}
-            >
-              <Text style={styles.primaryButtonText}>Scan Next</Text>
+      {/* Action Buttons */}
+      <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingBottom: 20 }}>
+        {!isScanning
+          ? <TouchableOpacity style={[styles.primaryButton, { flex: 1, backgroundColor: '#16a34a' }]} onPress={startScanning}>
+              <Text style={styles.primaryButtonText}>▶  Start Scanning</Text>
             </TouchableOpacity>
-          ) : (
-            <TouchableOpacity style={[styles.primaryButton, { flex: 1 }]} onPress={takePicture}>
-              <Text style={styles.primaryButtonText}>Capture & Check</Text>
+          : <TouchableOpacity style={[styles.primaryButton, { flex: 1, backgroundColor: '#d97706' }]} onPress={pauseScanning}>
+              <Text style={styles.primaryButtonText}>⏸  Pause</Text>
             </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={[styles.primaryButton, { flex: 1, backgroundColor: '#dc2626' }]}
-            onPress={handleStopSession}
-          >
-            <Text style={styles.primaryButtonText}>Stop Session</Text>
-          </TouchableOpacity>
-        </View>
+        }
+        <TouchableOpacity style={[styles.primaryButton, { flex: 1, backgroundColor: '#dc2626' }]} onPress={handleStopSession}>
+          <Text style={styles.primaryButtonText}>⏹  Stop Session</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -1313,27 +1343,46 @@ const MONTHS = [
 const YEARS = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
 
 const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
-  const [month, setMonth] = useState(new Date().getMonth() + 1);
-  const [year, setYear] = useState(new Date().getFullYear());
+  const [month, setMonth]   = useState(new Date().getMonth() + 1);
+  const [year, setYear]     = useState(new Date().getFullYear());
+  const [day, setDay]       = useState(null);   // null = monthly view
   const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading]       = useState(false);
   const [csvLoading, setCsvLoading] = useState(false);
+  const [dayData, setDayData]       = useState(null);   // { date, sessions, students }
+  const [dayLoading, setDayLoading] = useState(false);
 
-  // Month / Year picker modal state
+  // Picker modals
   const [showMonthPicker, setShowMonthPicker] = useState(false);
-  const [showYearPicker, setShowYearPicker] = useState(false);
+  const [showYearPicker, setShowYearPicker]   = useState(false);
+  const [showDayPicker, setShowDayPicker]     = useState(false);
 
-  // Edit attendance modal state
-  const [editStudent, setEditStudent] = useState(null);        // { student_id, name, session_id, currentStatus }
-  const [editStatus, setEditStatus] = useState('Present');
+  // Edit attendance modal state (session-based — unchanged)
+  const [editStudent, setEditStudent] = useState(null);
+  const [editStatus, setEditStatus]   = useState('Present');
   const [editLoading, setEditLoading] = useState(false);
 
-  // Fetch report whenever class / month / year changes
+  // Days available for the selected month/year
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const DAY_OPTIONS = [
+    { label: 'All Dates', value: null },
+    ...Array.from({ length: daysInMonth }, (_, i) => ({ label: String(i + 1).padStart(2, '0'), value: i + 1 })),
+  ];
+
+  // Load monthly report when class/month/year change
   useEffect(() => {
-    if (selectedClass?.id) {
-      loadReport(selectedClass.id, month, year);
-    }
+    if (selectedClass?.id) loadReport(selectedClass.id, month, year);
   }, [selectedClass, month, year]);
+
+  // Load day-specific data when day changes
+  useEffect(() => {
+    if (day !== null && selectedClass?.id) {
+      const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+      loadDayData(selectedClass.id, dateStr);
+    } else {
+      setDayData(null);
+    }
+  }, [day, selectedClass, month, year]);
 
   const loadReport = async (classId, m, y) => {
     setLoading(true);
@@ -1351,15 +1400,18 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
     }
   };
 
-  const handleMonthSelect = (m) => {
-    setMonth(m);
-    setShowMonthPicker(false);
+  const loadDayData = async (classId, dateStr) => {
+    setDayLoading(true);
+    try {
+      const result = await api.getAttendanceByDate(classId, dateStr);
+      setDayData(result.status === 'success' ? result : { date: dateStr, sessions: [], students: [] });
+    } catch { setDayData({ date: dateStr, sessions: [], students: [] }); }
+    finally { setDayLoading(false); }
   };
 
-  const handleYearSelect = (y) => {
-    setYear(y);
-    setShowYearPicker(false);
-  };
+  const handleMonthSelect = (m) => { setMonth(m); setDay(null); setDayData(null); setShowMonthPicker(false); };
+  const handleYearSelect  = (y) => { setYear(y);  setDay(null); setDayData(null); setShowYearPicker(false); };
+  const handleDaySelect   = (d) => { setDay(d); setShowDayPicker(false); };
 
   // Open Edit modal for a student
   const openEditModal = (student) => {
@@ -1450,26 +1502,20 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
   };
 
   const selectedMonthLabel = MONTHS.find(m => m.value === month)?.label || '';
+  const selectedDayLabel   = day !== null ? String(day).padStart(2, '0') : 'Day';
 
   return (
     <View style={styles.screenContainer}>
 
-      {/* ── Month Picker Modal ─────────────────────────── */}
-      <Modal visible={showMonthPicker} transparent animationType="slide"
-        onRequestClose={() => setShowMonthPicker(false)}>
+      {/* ── Month Picker Modal ── */}
+      <Modal visible={showMonthPicker} transparent animationType="slide" onRequestClose={() => setShowMonthPicker(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select Month</Text>
             <ScrollView style={{ maxHeight: 380 }}>
               {MONTHS.map(m => (
-                <TouchableOpacity
-                  key={m.value}
-                  style={[styles.modalItem, m.value === month && styles.modalItemSelected]}
-                  onPress={() => handleMonthSelect(m.value)}
-                >
-                  <Text style={[styles.modalItemText, m.value === month && { color: '#2563eb' }]}>
-                    {m.label}
-                  </Text>
+                <TouchableOpacity key={m.value} style={[styles.modalItem, m.value === month && styles.modalItemSelected]} onPress={() => handleMonthSelect(m.value)}>
+                  <Text style={[styles.modalItemText, m.value === month && { color: '#2563eb' }]}>{m.label}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -1480,19 +1526,14 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
         </View>
       </Modal>
 
-      {/* ── Year Picker Modal ──────────────────────────── */}
-      <Modal visible={showYearPicker} transparent animationType="slide"
-        onRequestClose={() => setShowYearPicker(false)}>
+      {/* ── Year Picker Modal ── */}
+      <Modal visible={showYearPicker} transparent animationType="slide" onRequestClose={() => setShowYearPicker(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select Year</Text>
             <ScrollView style={{ maxHeight: 280 }}>
               {YEARS.map(y => (
-                <TouchableOpacity
-                  key={y}
-                  style={[styles.modalItem, y === year && styles.modalItemSelected]}
-                  onPress={() => handleYearSelect(y)}
-                >
+                <TouchableOpacity key={y} style={[styles.modalItem, y === year && styles.modalItemSelected]} onPress={() => handleYearSelect(y)}>
                   <Text style={[styles.modalItemText, y === year && { color: '#2563eb' }]}>{y}</Text>
                 </TouchableOpacity>
               ))}
@@ -1504,87 +1545,70 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
         </View>
       </Modal>
 
-      {/* ── Edit Attendance Modal ──────────────────────── */}
-      <Modal visible={!!editStudent} transparent animationType="fade"
-        onRequestClose={() => setEditStudent(null)}>
-        <View style={[styles.modalOverlay, { justifyContent: 'center', paddingHorizontal: 24 }]}>
-          <View style={[styles.modalContent, { borderRadius: 20 }]}>
-            <Text style={styles.modalTitle}>Edit Attendance</Text>
-            <Text style={{ color: '#6b7280', fontSize: 14, marginBottom: 16 }}>
-              {editStudent?.name}  •  Current: {editStudent?.attendance}%
-            </Text>
-
-            {/* Toggle Present / Absent */}
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 20 }}>
-              <TouchableOpacity
-                style={[{
-                  flex: 1, padding: 16, borderRadius: 12, alignItems: 'center',
-                  borderWidth: 2,
-                  borderColor: editStatus === 'Present' ? '#16a34a' : '#e5e7eb',
-                  backgroundColor: editStatus === 'Present' ? '#dcfce7' : '#f9fafb',
-                }]}
-                onPress={() => setEditStatus('Present')}
-              >
-                <Text style={{ fontSize: 22, marginBottom: 4 }}>✅</Text>
-                <Text style={{
-                  fontWeight: 'bold', fontSize: 14,
-                  color: editStatus === 'Present' ? '#16a34a' : '#9ca3af'
-                }}>
-                  Present
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[{
-                  flex: 1, padding: 16, borderRadius: 12, alignItems: 'center',
-                  borderWidth: 2,
-                  borderColor: editStatus === 'Absent' ? '#dc2626' : '#e5e7eb',
-                  backgroundColor: editStatus === 'Absent' ? '#fee2e2' : '#f9fafb',
-                }]}
-                onPress={() => setEditStatus('Absent')}
-              >
-                <Text style={{ fontSize: 22, marginBottom: 4 }}>❌</Text>
-                <Text style={{
-                  fontWeight: 'bold', fontSize: 14,
-                  color: editStatus === 'Absent' ? '#dc2626' : '#9ca3af'
-                }}>
-                  Absent
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.primaryButton, { marginBottom: 8 }]}
-              onPress={handleSaveEdit}
-              disabled={editLoading}
-            >
-              {editLoading
-                ? <ActivityIndicator color="white" />
-                : <Text style={styles.primaryButtonText}>💾 Save Change</Text>
-              }
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={() => setEditStudent(null)}
-            >
+      {/* ── Day Picker Modal ── */}
+      <Modal visible={showDayPicker} transparent animationType="slide" onRequestClose={() => setShowDayPicker(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select Date</Text>
+            <Text style={{ color: '#6b7280', fontSize: 13, marginBottom: 8 }}>{selectedMonthLabel} {year}</Text>
+            <ScrollView style={{ maxHeight: 380 }}>
+              {DAY_OPTIONS.map(d => (
+                <TouchableOpacity
+                  key={String(d.value)}
+                  style={[styles.modalItem, d.value === day && styles.modalItemSelected]}
+                  onPress={() => handleDaySelect(d.value)}
+                >
+                  <Text style={[styles.modalItemText, d.value === day && { color: '#2563eb' }]}>
+                    {d.value === null
+                      ? '📅  All Dates (Monthly View)'
+                      : `${String(d.value).padStart(2,'0')} ${selectedMonthLabel} ${year}`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowDayPicker(false)}>
               <Text style={styles.modalCloseButtonText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* Header */}
+      {/* ── Edit Attendance Modal (session-based — unchanged) ── */}
+      <Modal visible={!!editStudent} transparent animationType="fade" onRequestClose={() => setEditStudent(null)}>
+        <View style={[styles.modalOverlay, { justifyContent: 'center', paddingHorizontal: 24 }]}>
+          <View style={[styles.modalContent, { borderRadius: 20 }]}>
+            <Text style={styles.modalTitle}>Edit Attendance</Text>
+            <Text style={{ color: '#6b7280', fontSize: 14, marginBottom: 16 }}>
+              {editStudent?.name}  •  Current: {editStudent?.attendance}%
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 20 }}>
+              <TouchableOpacity style={[{ flex: 1, padding: 16, borderRadius: 12, alignItems: 'center', borderWidth: 2, borderColor: editStatus === 'Present' ? '#16a34a' : '#e5e7eb', backgroundColor: editStatus === 'Present' ? '#dcfce7' : '#f9fafb' }]} onPress={() => setEditStatus('Present')}>
+                <Text style={{ fontSize: 22, marginBottom: 4 }}>✅</Text>
+                <Text style={{ fontWeight: 'bold', fontSize: 14, color: editStatus === 'Present' ? '#16a34a' : '#9ca3af' }}>Present</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[{ flex: 1, padding: 16, borderRadius: 12, alignItems: 'center', borderWidth: 2, borderColor: editStatus === 'Absent' ? '#dc2626' : '#e5e7eb', backgroundColor: editStatus === 'Absent' ? '#fee2e2' : '#f9fafb' }]} onPress={() => setEditStatus('Absent')}>
+                <Text style={{ fontSize: 22, marginBottom: 4 }}>❌</Text>
+                <Text style={{ fontWeight: 'bold', fontSize: 14, color: editStatus === 'Absent' ? '#dc2626' : '#9ca3af' }}>Absent</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={[styles.primaryButton, { marginBottom: 8 }]} onPress={handleSaveEdit} disabled={editLoading}>
+              {editLoading ? <ActivityIndicator color="white" /> : <Text style={styles.primaryButtonText}>💾 Save Change</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setEditStudent(null)}>
+              <Text style={styles.modalCloseButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigateTo('TeacherDashboard')}
-          style={{ padding: 10, marginRight: 8 }}>
+        <TouchableOpacity onPress={() => navigateTo('TeacherDashboard')} style={{ padding: 10, marginRight: 8 }}>
           <ChevronLeft color="#374151" size={30} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Attendance Register</Text>
         <TouchableOpacity onPress={handleDownloadCSV} disabled={csvLoading}>
-          {csvLoading
-            ? <ActivityIndicator size="small" color="#374151" />
-            : <Download color="#374151" size={24} />
-          }
+          {csvLoading ? <ActivityIndicator size="small" color="#374151" /> : <Download color="#374151" size={24} />}
         </TouchableOpacity>
       </View>
 
@@ -1592,139 +1616,202 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
         {/* Class Info */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>{selectedClass?.name}</Text>
-          <Text style={styles.label}>Total Sessions: {report?.total_classes || 0}</Text>
+          <Text style={styles.label}>Total Sessions (this month): {report?.total_classes || 0}</Text>
         </View>
 
-        {/* ── Filter Row — Month & Year (INTERACTIVE) ── */}
-        <View style={styles.filterRow}>
-          <TouchableOpacity
-            style={[styles.filterBox, { flex: 1 }]}
-            onPress={() => setShowMonthPicker(true)}
-          >
-            <Text style={{ fontSize: 14, color: '#111827', fontWeight: '500' }}>
-              {selectedMonthLabel}
-            </Text>
-            <ChevronDown size={16} color="#6b7280" />
+        {/* ── Filter Row — Month · Year · Day ── */}
+        <View style={[styles.filterRow, { flexWrap: 'nowrap' }]}>
+          <TouchableOpacity style={[styles.filterBox, { flex: 1 }]} onPress={() => setShowMonthPicker(true)}>
+            <Text style={{ fontSize: 13, color: '#111827', fontWeight: '500' }} numberOfLines={1}>{selectedMonthLabel}</Text>
+            <ChevronDown size={14} color="#6b7280" />
           </TouchableOpacity>
 
+          <TouchableOpacity style={[styles.filterBox, { width: 70 }]} onPress={() => setShowYearPicker(true)}>
+            <Text style={{ fontSize: 13, color: '#111827', fontWeight: '500' }}>{year}</Text>
+            <ChevronDown size={14} color="#6b7280" />
+          </TouchableOpacity>
+
+          {/* Day Picker — highlighted blue when a day is selected */}
           <TouchableOpacity
-            style={[styles.filterBox, { width: '32%' }]}
-            onPress={() => setShowYearPicker(true)}
+            style={[styles.filterBox, { width: 80, borderColor: day !== null ? '#2563eb' : '#e5e7eb', backgroundColor: day !== null ? '#eff6ff' : 'white' }]}
+            onPress={() => setShowDayPicker(true)}
           >
-            <Text style={{ fontSize: 14, color: '#111827', fontWeight: '500' }}>{year}</Text>
-            <ChevronDown size={16} color="#6b7280" />
+            <Text style={{ fontSize: 13, color: day !== null ? '#2563eb' : '#6b7280', fontWeight: day !== null ? '700' : '500' }}>
+              {day !== null ? `📅 ${selectedDayLabel}` : 'Day'}
+            </Text>
+            <ChevronDown size={14} color={day !== null ? '#2563eb' : '#6b7280'} />
           </TouchableOpacity>
         </View>
 
-        {/* CSV Download Banner */}
-        <TouchableOpacity
-          style={{
-            flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-            backgroundColor: '#eff6ff', padding: 10, borderRadius: 10, marginBottom: 12,
-            borderWidth: 1, borderColor: '#bfdbfe',
-          }}
-          onPress={handleDownloadCSV}
-          disabled={csvLoading}
-        >
-          <Download color="#2563eb" size={16} style={{ marginRight: 8 }} />
-          <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 13 }}>
-            {csvLoading ? 'Preparing CSV...' : `Download CSV — ${selectedMonthLabel} ${year}`}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Student List */}
-        {loading ? (
-          <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
-        ) : !report?.students?.length ? (
-          <View style={[styles.card, { alignItems: 'center', padding: 32 }]}>
-            <Text style={{ color: '#6b7280', fontSize: 14 }}>
-              No sessions found for {selectedMonthLabel} {year}
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.card}>
-            <View style={[styles.cardHeader, { marginBottom: 12 }]}>
-              <Text style={styles.sectionTitle}>
-                Students ({report.students.length})
+        {/* ── DAY VIEW (when a specific date is selected) ── */}
+        {day !== null && (
+          <>
+            {/* Date header card */}
+            <View style={[styles.card, { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' }]}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#1d4ed8', textAlign: 'center' }}>
+                📅  {selectedDayLabel} {selectedMonthLabel} {year}
               </Text>
-              <Text style={styles.label}>{report.total_classes} sessions</Text>
+              {dayData?.sessions?.length > 0 && (
+                <Text style={{ textAlign: 'center', color: '#3b82f6', fontSize: 12, marginTop: 4 }}>
+                  {dayData.sessions.length} session{dayData.sessions.length !== 1 ? 's' : ''} held  •  {dayData.sessions.reduce((s, x) => s + (x.total_scanned || 0), 0)} total scanned
+                </Text>
+              )}
             </View>
-            {report.students.map((student, index) => (
-              <View key={index} style={[styles.listItem, {
-                backgroundColor: index % 2 === 0 ? '#ffffff' : '#f9fafb',
-                paddingHorizontal: 8, borderRadius: 8,
-              }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.listName}>{student.name}</Text>
-                  <Text style={styles.listSub}>
-                    Roll: {student.roll_no}  •  {student.present}/{student.total} present
-                  </Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={[
-                    styles.listScore,
-                    { color: student.attendance >= 75 ? '#16a34a' : '#dc2626' }
-                  ]}>
-                    {student.attendance}%
-                  </Text>
-                  <TouchableOpacity
-                    style={{
-                      marginTop: 4, paddingHorizontal: 10, paddingVertical: 3,
-                      borderRadius: 6, borderWidth: 1,
-                      borderColor: '#2563eb', backgroundColor: '#eff6ff'
-                    }}
-                    onPress={() => openEditModal(student)}
-                  >
-                    <Text style={{ color: '#2563eb', fontSize: 11, fontWeight: '700' }}>✏ Edit</Text>
-                  </TouchableOpacity>
-                </View>
+
+            {dayLoading ? (
+              <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
+            ) : !dayData || dayData.students.length === 0 ? (
+              <View style={[styles.card, { alignItems: 'center', padding: 36 }]}>
+                <Text style={{ fontSize: 30, marginBottom: 8 }}>📭</Text>
+                <Text style={{ color: '#374151', fontSize: 15, fontWeight: '600' }}>No data for this date</Text>
+                <Text style={{ color: '#9ca3af', fontSize: 12, marginTop: 4, textAlign: 'center' }}>
+                  No session was held on {selectedDayLabel} {selectedMonthLabel} {year}
+                </Text>
               </View>
-            ))}
-          </View>
+            ) : (
+              <View style={styles.card}>
+                {/* Present / Absent summary */}
+                <View style={[styles.statsRow, { marginBottom: 12 }]}>
+                  <View style={[styles.miniStat, { backgroundColor: '#dcfce7' }]}>
+                    <Text style={[styles.miniStatLabel, { color: '#16a34a' }]}>PRESENT</Text>
+                    <Text style={[styles.miniStatValue, { color: '#16a34a' }]}>{dayData.students.filter(s => s.status === 'Present').length}</Text>
+                  </View>
+                  <View style={[styles.miniStat, { backgroundColor: '#fee2e2' }]}>
+                    <Text style={[styles.miniStatLabel, { color: '#dc2626' }]}>ABSENT</Text>
+                    <Text style={[styles.miniStatValue, { color: '#dc2626' }]}>{dayData.students.filter(s => s.status === 'Absent').length}</Text>
+                  </View>
+                  <View style={[styles.miniStat, { backgroundColor: '#dbeafe' }]}>
+                    <Text style={[styles.miniStatLabel, { color: '#2563eb' }]}>TOTAL</Text>
+                    <Text style={[styles.miniStatValue, { color: '#2563eb' }]}>{dayData.students.length}</Text>
+                  </View>
+                </View>
+
+                {/* Per-student status */}
+                {dayData.students.map((student, index) => (
+                  <View key={index} style={[styles.listItem, { backgroundColor: index % 2 === 0 ? '#ffffff' : '#f9fafb', paddingHorizontal: 8, borderRadius: 8 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listName}>{student.name}</Text>
+                      <Text style={styles.listSub}>Roll: {student.roll_no}</Text>
+                    </View>
+                    <View style={{ paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8, backgroundColor: student.status === 'Present' ? '#dcfce7' : '#fee2e2' }}>
+                      <Text style={{ fontWeight: '700', fontSize: 13, color: student.status === 'Present' ? '#16a34a' : '#dc2626' }}>
+                        {student.status === 'Present' ? '✅ Present' : '❌ Absent'}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ── MONTHLY VIEW (default — no day selected) ── */}
+        {day === null && (
+          <>
+            {/* CSV Download Banner */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#eff6ff', padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: '#bfdbfe' }}
+              onPress={handleDownloadCSV} disabled={csvLoading}
+            >
+              <Download color="#2563eb" size={16} style={{ marginRight: 8 }} />
+              <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 13 }}>
+                {csvLoading ? 'Preparing CSV…' : `Download CSV — ${selectedMonthLabel} ${year}`}
+              </Text>
+            </TouchableOpacity>
+
+            {loading ? (
+              <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 40 }} />
+            ) : !report?.students?.length ? (
+              <View style={[styles.card, { alignItems: 'center', padding: 32 }]}>
+                <Text style={{ color: '#6b7280', fontSize: 14 }}>No sessions found for {selectedMonthLabel} {year}</Text>
+              </View>
+            ) : (
+              <View style={styles.card}>
+                <View style={[styles.cardHeader, { marginBottom: 12 }]}>
+                  <Text style={styles.sectionTitle}>Students ({report.students.length})</Text>
+                  <Text style={styles.label}>{report.total_classes} sessions</Text>
+                </View>
+                {report.students.map((student, index) => (
+                  <View key={index} style={[styles.listItem, { backgroundColor: index % 2 === 0 ? '#ffffff' : '#f9fafb', paddingHorizontal: 8, borderRadius: 8 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listName}>{student.name}</Text>
+                      <Text style={styles.listSub}>Roll: {student.roll_no}  •  {student.present}/{student.total} present</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={[styles.listScore, { color: student.attendance >= 75 ? '#16a34a' : '#dc2626' }]}>{student.attendance}%</Text>
+                      <TouchableOpacity
+                        style={{ marginTop: 4, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: '#2563eb', backgroundColor: '#eff6ff' }}
+                        onPress={() => openEditModal(student)}
+                      >
+                        <Text style={{ color: '#2563eb', fontSize: 11, fontWeight: '700' }}>✏ Edit</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
         )}
       </ScrollView>
     </View>
   );
 };
 
+
 // --- 6. NOTIFICATION HUB ---
 const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
   const [target, setTarget] = useState('defaulters');
   const [message, setMessage] = useState('Dear Student, your attendance is below the required threshold. Please meet the HOD immediately.');
-  const [studentId, setStudentId] = useState('');
+  const [studentEmail, setStudentEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const [classStudents, setClassStudents] = useState([]);
+  const [showStudentPicker, setShowStudentPicker] = useState(false);
+
+  // Load students for the email picker
+  useEffect(() => {
+    if (target === 'individual') {
+      api.getStudents().then(res => {
+        if (res.status === 'success') setClassStudents(res.data || []);
+      }).catch(() => {});
+    }
+  }, [target]);
 
   const handleSend = async () => {
-    // Validation
     if (!selectedClass?.id) {
-      Alert.alert('Error', 'No class selected. Please go back to dashboard and select a class.');
+      Alert.alert('Error', 'No class selected. Go back and select a class.');
       return;
     }
     if (!message.trim()) {
       Alert.alert('Error', 'Notification message cannot be empty.');
       return;
     }
-    if (target === 'individual' && !studentId.trim()) {
-      Alert.alert('Error', 'Please enter a valid Student Database ID intended for this notification.');
-      return;
+    if (target === 'individual') {
+      if (!studentEmail.trim()) {
+        Alert.alert('Error', 'Please enter the student email address.');
+        return;
+      }
+      if (!studentEmail.includes('@')) {
+        Alert.alert('Error', 'Please enter a valid email address.');
+        return;
+      }
     }
 
     setLoading(true);
     try {
       const result = await api.sendNotification(
-        selectedClass?.id, 
-        target, 
+        selectedClass?.id,
+        target,
         message,
-        target === 'individual' ? studentId.trim() : null
+        target === 'individual' ? studentEmail.trim().toLowerCase() : null
       );
       if (result.status === 'success') {
-        Alert.alert("Success", result.message || "Notifications sent successfully!");
-        setStudentId('');
+        Alert.alert('Success', result.message || 'Notifications sent successfully!');
+        setStudentEmail('');
       } else {
-        Alert.alert("Error", result.message || "Failed to send notifications.");
+        Alert.alert('Error', result.message || 'Failed to send notifications.');
       }
     } catch (error) {
-      Alert.alert("Error", error.message || "Network error. Failed to send notifications.");
+      Alert.alert('Error', error.message || 'Network error.');
     } finally {
       setLoading(false);
     }
@@ -1742,6 +1829,42 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
         <Text style={styles.headerTitle}>Notification Hub</Text>
         <View style={{ width: 24 }} />
       </View>
+
+      {/* Student email picker modal */}
+      <Modal
+        visible={showStudentPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowStudentPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select Student</Text>
+            <ScrollView style={{ maxHeight: 380 }}>
+              {classStudents.length === 0 ? (
+                <Text style={{ textAlign: 'center', padding: 24, color: '#9ca3af' }}>No students found</Text>
+              ) : (
+                classStudents.map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={styles.modalItem}
+                    onPress={() => { setStudentEmail(s.email); setShowStudentPicker(false); }}
+                  >
+                    <Text style={styles.modalItemText}>{s.name}</Text>
+                    <Text style={styles.modalItemSubtext}>{s.email}{s.roll_no ? ` • ${s.roll_no}` : ''}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setShowStudentPicker(false)}
+            >
+              <Text style={styles.modalCloseButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <ScrollView style={styles.scrollContent}>
         <View style={styles.card}>
@@ -1769,24 +1892,34 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
               <Text style={{ fontSize: 10, color: '#6b7280' }}>General Notice</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.gridItem, target === 'individual' && { backgroundColor: '#f3f4f6', borderColor: '#d1d5db' }]}
+              style={[styles.gridItem, target === 'individual' && { backgroundColor: '#f3f4f6', borderColor: '#374151', borderWidth: 2 }]}
               onPress={() => setTarget('individual')}
             >
               <Text style={{ color: '#374151', fontWeight: 'bold' }}>👤 Individual</Text>
               <Text style={{ fontSize: 10, color: '#6b7280' }}>Single Student</Text>
             </TouchableOpacity>
           </View>
-          
+
           {target === 'individual' && (
-            <View style={[styles.inputGroup, { marginTop: 12, marginBottom: 0 }]}>
-              <Text style={styles.label}>Student ID</Text>
+            <View style={{ marginTop: 12 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <Text style={styles.label}>Student Email</Text>
+                <TouchableOpacity onPress={() => setShowStudentPicker(true)}>
+                  <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '700' }}>📋 Pick from list</Text>
+                </TouchableOpacity>
+              </View>
               <TextInput
                 style={styles.input}
-                placeholder="Enter Student MongoDB ObjectId"
+                placeholder="student@institute.edu"
                 placeholderTextColor="#9ca3af"
-                value={studentId}
-                onChangeText={setStudentId}
+                value={studentEmail}
+                onChangeText={setStudentEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
               />
+              {studentEmail.length > 0 && !studentEmail.includes('@') && (
+                <Text style={{ color: '#dc2626', fontSize: 11, marginTop: 4 }}>⚠ Please enter a valid email address</Text>
+              )}
             </View>
           )}
         </View>
@@ -1810,7 +1943,7 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
           {loading ? (
             <ActivityIndicator color="white" />
           ) : (
-            <Text style={styles.primaryButtonText}>Send Notification</Text>
+            <Text style={styles.primaryButtonText}>📤 Send Notification</Text>
           )}
         </TouchableOpacity>
       </ScrollView>

@@ -26,6 +26,11 @@ class ClassModel(BaseModel):
                 "department":     {"bsonType": "string"},
                 "schedule":       {"bsonType": "string"},
                 "created_at":     {"bsonType": "date"},
+                "students": {
+                    "bsonType": "array",
+                    "items":    {"bsonType": "objectId"},
+                    "description": "List of enrolled student ObjectIds",
+                },
             },
         }
     }
@@ -41,6 +46,7 @@ class ClassModel(BaseModel):
         code: str,
         teacher_id: str,
         total_students: int,
+        student_ids: List[str] = None,
         batch: str = None,
         department: str = None,
         schedule: str = None,
@@ -51,6 +57,7 @@ class ClassModel(BaseModel):
             'teacher_id': ObjectId(teacher_id),
             'total_students': total_students,
             'created_at': datetime.now(),
+            'students': [ObjectId(sid) for sid in (student_ids or []) if sid],
         }
         if batch:
             doc['batch'] = batch
@@ -77,4 +84,11 @@ class ClassModel(BaseModel):
         return self.update_one(
             {'_id': ObjectId(class_id)},
             {'$set': {'total_students': total_students}},
+        )
+
+    def add_student(self, class_id: str, student_id: str) -> bool:
+        """Add a single student to the class students array (idempotent)."""
+        return self.update_one(
+            {'_id': ObjectId(class_id)},
+            {'$addToSet': {'students': ObjectId(student_id)}},
         )

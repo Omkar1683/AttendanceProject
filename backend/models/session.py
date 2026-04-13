@@ -90,6 +90,19 @@ class SessionModel(BaseModel):
             'date': {'$gte': start_date, '$lt': end_date},
         })
 
+    def find_sessions_for_date(self, class_id: str, date_str: str) -> List[Dict]:
+        """Return all sessions for a class on a specific calendar day (YYYY-MM-DD)."""
+        try:
+            day = datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            return []
+        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end   = day.replace(hour=23, minute=59, second=59, microsecond=999999)
+        return self.find_many({
+            'class_id': ObjectId(class_id),
+            'date':     {'$gte': day_start, '$lte': day_end},
+        })
+
 
 class AttendanceLogModel(BaseModel):
     """Per-student attendance records."""

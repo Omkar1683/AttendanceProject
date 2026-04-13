@@ -34,7 +34,7 @@ def signup():
     data = request.get_json(silent=True) or {}
     result = auth_svc.signup(data)
     if result['ok']:
-        return jsonify({'status': 'success', 'message': 'User registered successfully',
+        return jsonify({'status': 'success', 'message': 'Teacher account created successfully',
                         'user_id': result['user_id']}), 201
     return jsonify({'status': 'error', 'message': result['message']}), result['code']
 
@@ -49,9 +49,28 @@ def register_student():
     result = auth_svc.register_student(data)
     if result['ok']:
         face_service.load_faces()   # Refresh in-memory cache
-        return jsonify({'status': 'success', 'message': 'Student registered successfully',
-                        'student_id': result['student_id']}), 201
+        return jsonify({
+            'status': 'success',
+            'message': 'Student registered successfully. Default password: 12345678',
+            'student_id': result['student_id'],
+            'user_id':    result['user_id'],
+        }), 201
     return jsonify({'status': 'error', 'message': result['message']}), result['code']
+
+
+# ── /students — list all students (teacher only) ──────────────────────────────
+
+@auth_bp.route('/students', methods=['GET'])
+@token_required
+@role_required('teacher')
+def list_students():
+    """
+    Return all registered students for the multi-select class picker.
+    Optional query param: ?batch=MCA-A
+    """
+    batch = request.args.get('batch', '').strip() or None
+    students = auth_svc.get_students_by_batch(batch)
+    return jsonify({'status': 'success', 'data': students})
 
 
 # ── /classes ──────────────────────────────────────────────────────────────────
@@ -82,7 +101,8 @@ def create_class():
         teacher_id=teacher_id,
         name=data.get('name'),
         code=data.get('code'),
-        total_students=data.get('total_students', 1),
+        student_ids=data.get('student_ids', []),
+        total_students=data.get('total_students'),
         batch=data.get('batch'),
         department=data.get('department'),
         schedule=data.get('schedule'),

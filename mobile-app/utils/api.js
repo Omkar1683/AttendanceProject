@@ -4,7 +4,7 @@ import { File, Directory, Paths } from 'expo-file-system/next';
 import * as Sharing from 'expo-sharing';
 
 // Backend server URL - ensure your mobile device is on the same network
-const BASE_URL = 'http://192.168.29.57:5000';
+const BASE_URL = 'http://192.168.29.56:5000';
 
 
 const getHeaders = async () => {
@@ -57,14 +57,24 @@ export const api = {
         return response.json();
     },
 
-    // ── NEW: Create Subject/Class ─────────────────────────────────────────────────
-    createClass: async ({ name, code, total_students, batch, department, schedule }) => {
+    // ── Create Subject/Class ──────────────────────────────────────────────────────
+    createClass: async ({ name, code, student_ids = [], batch, department, schedule }) => {
         const headers = await getHeaders();
+        // total_students is derived from selected students count (or 1 minimum)
+        const total_students = Math.max(student_ids.length, 1);
         const response = await fetch(`${BASE_URL}/classes/create`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ name, code, total_students, batch, department, schedule }),
+            body: JSON.stringify({ name, code, total_students, student_ids, batch, department, schedule }),
         });
+        return response.json();
+    },
+
+    // ── Get all students (for class assignment picker) ────────────────────────────
+    getStudents: async (batch = '') => {
+        const headers = await getHeaders();
+        const query = batch ? `?batch=${encodeURIComponent(batch)}` : '';
+        const response = await fetch(`${BASE_URL}/students${query}`, { headers });
         return response.json();
     },
 
@@ -154,6 +164,17 @@ export const api = {
                 status,          // 'Present' or 'Absent'
             }),
         });
+        return response.json();
+    },
+
+    // ── NEW: Attendance by specific date (YYYY-MM-DD) ───────────────────────────────
+    // Returns: { status, date, sessions: [...], students: [{student_id, name, roll_no, status}] }
+    getAttendanceByDate: async (classId, dateStr) => {
+        const headers = await getHeaders();
+        const response = await fetch(
+            `${BASE_URL}/attendance/by-date?class_id=${classId}&date=${dateStr}`,
+            { headers }
+        );
         return response.json();
     },
 
@@ -265,23 +286,24 @@ export const api = {
     },
 
     // Notifications
-    sendNotification: async (classId, target, message, studentId = null) => {
+    // NOTE: for 'individual' target, pass the student's email in the `email` param
+    sendNotification: async (classId, target, message, email = null) => {
         const headers = await getHeaders();
         const response = await fetch(`${BASE_URL}/notifications/send`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ class_id: classId, target, message, student_id: studentId }),
+            body: JSON.stringify({ class_id: classId, target, message, email }),
         });
         return response.json();
     },
 
-    // User Registration
-    signup: async (email, password, name, role, department, roll_no = null) => {
+    // Teacher Signup (role is always 'teacher' — students are created by teachers)
+    signup: async (email, password, name, department) => {
         try {
             const response = await fetch(`${BASE_URL}/signup`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password, name, role, department, roll_no }),
+                body: JSON.stringify({ email, password, name, role: 'teacher', department }),
             });
             const data = await response.json();
             if (data.status === 'success') {
