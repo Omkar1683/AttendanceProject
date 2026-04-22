@@ -1035,60 +1035,80 @@ const RegisterStudentScreen = ({ navigateTo }) => {
   );
 };
 
-// --- 5. SCAN ATTENDANCE (INTERVAL-BASED VIDEO MODE) ---
+// --- 5. SCAN ATTENDANCE (PHOTO / VIDEO MODE) ---
 const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
   const [permission, requestPermission] = useCameraPermissions();
+
+  // ── Mode: 'video' | 'photo' ────────────────────────────────────────────────
+  const [scanMode, setScanMode]             = useState('video');   // default: Video Mode
+
+  // ── Shared state ───────────────────────────────────────────────────────────
   const [isScanning, setIsScanning]         = useState(false);
   const [scanStatus, setScanStatus]         = useState('Ready · Press Start');
   const [statusType, setStatusType]         = useState('idle');
   const [markedStudents, setMarkedStudents] = useState([]);
   const [facing, setFacing]                 = useState('back');
-  const [isUploading, setIsUploading]       = useState(false);
-  const cameraRef       = useRef(null);
-  const scanIntervalRef = useRef(null);
-  const markedIdsRef    = useRef(new Set());
-  const uploadingRef    = useRef(false);
+  const [isProcessing, setIsProcessing]     = useState(false);   // API guard
 
-  // ── All hooks must be unconditional — BEFORE any early returns ──────────────
-  // Clear interval on unmount
+  // ── Refs ───────────────────────────────────────────────────────────────────
+  const cameraRef        = useRef(null);
+  const scanIntervalRef  = useRef(null);
+  const markedIdsRef     = useRef(new Set());
+  const isProcessingRef  = useRef(false);  // ref mirror to avoid stale closures
+
+  // ── Cleanup on unmount ─────────────────────────────────────────────────────
   useEffect(() => {
     return () => { if (scanIntervalRef.current) clearInterval(scanIntervalRef.current); };
   }, []);
 
-  const startScanning = () => {
-    if (!currentSession) {
-      Alert.alert('No Session', 'Go back and start an attendance session first.');
-      return;
+  // ── When mode changes, stop any active scanning ────────────────────────────
+  useEffect(() => {
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current);
+      scanIntervalRef.current = null;
     }
-    setIsScanning(true);
-    setScanStatus('Scanning…');
-    setStatusType('scanning');
-    scanIntervalRef.current = setInterval(captureAndScan, 2500);
-  };
-
-  const pauseScanning = () => {
-    if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; }
     setIsScanning(false);
-    setScanStatus('Paused');
+    setScanStatus(scanMode === 'video' ? 'Video Mode · Press Start' : 'Photo Mode · Press Capture');
     setStatusType('idle');
-  };
+  }, [scanMode]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Core: capture one frame and send to backend
+  // ─────────────────────────────────────────────────────────────────────────
   const captureAndScan = async () => {
-    if (uploadingRef.current || !cameraRef.current) return;
-    uploadingRef.current = true;
-    setIsUploading(true);
+    // isProcessing guard — prevents API overload
+    if (isProcessingRef.current || !cameraRef.current) return;
+
+    isProcessingRef.current = true;
+    setIsProcessing(true);
+    setScanStatus('Processing…');
+    setStatusType('scanning');
+
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.4, base64: false, skipProcessing: true });
+      // skipProcessing: true → no shutter animation, no preview update → smooth video feel
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.4,
+        base64: false,
+        skipProcessing: true,   // ← suppresses flash / shutter effect
+      });
+
       const form = new FormData();
       form.append('file', { uri: photo.uri, type: 'image/jpeg', name: 'frame.jpg' });
       form.append('session_id', currentSession);
-      const res  = await fetch(`${api.BASE_URL}/scan`, { method: 'POST', body: form, headers: { 'Content-Type': 'multipart/form-data' } });
+
+      const res  = await fetch(`${api.BASE_URL}/scan`, {
+        method: 'POST',
+        body: form,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
       const data = await res.json();
+
       if (data.status === 'error') {
         setScanStatus(data.message === 'No faces detected' ? '👁  No face in frame' : `⚠ ${data.message}`);
         setStatusType('error');
         return;
       }
+
       if (data.people?.length > 0) {
         data.people.forEach(person => {
           if (person.name !== 'Unknown' && person.status === 'Present') {
@@ -1096,7 +1116,7 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
               markedIdsRef.current.add(person.student_id);
               const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
               setMarkedStudents(prev => [{ name: person.name, student_id: person.student_id, time }, ...prev]);
-              setScanStatus(`✅ Marked Present: ${person.name}`);
+              setScanStatus(`✅ Face Detected: ${person.name}`);
               setStatusType('marked');
             } else {
               setScanStatus(`↩ Already marked: ${person.name}`);
@@ -1107,13 +1127,60 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
             setStatusType('unknown');
           }
         });
+      } else {
+        // No people array or empty — back to scanning status in video mode
+        if (scanMode === 'video' && isScanning) {
+          setScanStatus('Scanning…');
+          setStatusType('scanning');
+        }
       }
-    } catch { setScanStatus('⚠ Connection error'); setStatusType('error'); }
-    finally { uploadingRef.current = false; setIsUploading(false); }
+    } catch {
+      setScanStatus('⚠ Connection error');
+      setStatusType('error');
+    } finally {
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+    }
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  VIDEO MODE controls
+  // ─────────────────────────────────────────────────────────────────────────
+  const startVideoScanning = () => {
+    if (!currentSession) {
+      Alert.alert('No Session', 'Go back and start an attendance session first.');
+      return;
+    }
+    setIsScanning(true);
+    setScanStatus('Scanning…');
+    setStatusType('scanning');
+    // Capture every 1 second; guard prevents overlapping requests
+    scanIntervalRef.current = setInterval(captureAndScan, 1000);
+  };
+
+  const pauseVideoScanning = () => {
+    if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; }
+    setIsScanning(false);
+    setScanStatus('Paused');
+    setStatusType('idle');
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  PHOTO MODE controls
+  // ─────────────────────────────────────────────────────────────────────────
+  const capturePhotoManual = () => {
+    if (!currentSession) {
+      Alert.alert('No Session', 'Go back and start an attendance session first.');
+      return;
+    }
+    captureAndScan();
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Stop session
+  // ─────────────────────────────────────────────────────────────────────────
   const handleStopSession = async () => {
-    pauseScanning();
+    pauseVideoScanning();
     try {
       await api.stopSession(currentSession);
       Alert.alert('✅ Session Complete',
@@ -1122,6 +1189,9 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
     } catch { Alert.alert('Error', 'Failed to stop session'); }
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Status color maps
+  // ─────────────────────────────────────────────────────────────────────────
   const S_COLOR = { idle: '#6b7280', scanning: '#2563eb', detected: '#16a34a', marked: '#059669', unknown: '#d97706', error: '#dc2626' };
   const S_BG    = { idle: '#f3f4f6', scanning: '#eff6ff', detected: '#dcfce7', marked: '#d1fae5', unknown: '#fef3c7', error: '#fee2e2' };
 
@@ -1138,65 +1208,143 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
     );
   }
 
+  const isVideoMode = scanMode === 'video';
+
   return (
     <View style={[styles.screenContainer, { backgroundColor: '#0f172a' }]}>
-      {/* Header */}
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <View style={[styles.header, { backgroundColor: '#1e293b', borderBottomWidth: 0 }]}>
         <TouchableOpacity onPress={() => navigateTo('TeacherDashboard')} style={{ padding: 10, marginRight: 8 }}>
           <ChevronLeft color="white" size={30} />
         </TouchableOpacity>
         <View style={{ alignItems: 'center', flex: 1 }}>
-          <Text style={[styles.headerTitle, { color: 'white' }]}>Video Attendance</Text>
+          <Text style={[styles.headerTitle, { color: 'white' }]}>
+            {isVideoMode ? 'Video Attendance' : 'Photo Attendance'}
+          </Text>
           <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 1 }}>
-            {isScanning ? '🔴 SCANNING' : '⏸ PAUSED'}  •  {markedStudents.length} marked present
+            {isVideoMode
+              ? (isScanning ? '🔴 LIVE SCANNING' : '⏸ PAUSED')
+              : '📷 MANUAL CAPTURE'
+            }  •  {markedStudents.length} marked present
           </Text>
         </View>
         <View style={{ width: 50 }} />
       </View>
 
-      {/* Camera Preview */}
-      <View style={{ flex: 1, margin: 12, borderRadius: 20, overflow: 'hidden', borderWidth: 2, borderColor: isScanning ? '#22c55e' : '#334155' }}>
+      {/* ── Mode Toggle ────────────────────────────────────────────────────── */}
+      <View style={{
+        flexDirection: 'row', marginHorizontal: 16, marginTop: 10, marginBottom: 4,
+        backgroundColor: '#1e293b', borderRadius: 12, padding: 4,
+      }}>
+        <TouchableOpacity
+          style={{
+            flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center',
+            backgroundColor: isVideoMode ? '#2563eb' : 'transparent',
+          }}
+          onPress={() => setScanMode('video')}
+        >
+          <Text style={{ color: isVideoMode ? 'white' : '#64748b', fontWeight: '700', fontSize: 13 }}>
+            📹  Video Mode
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={{
+            flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center',
+            backgroundColor: !isVideoMode ? '#7c3aed' : 'transparent',
+          }}
+          onPress={() => setScanMode('photo')}
+        >
+          <Text style={{ color: !isVideoMode ? 'white' : '#64748b', fontWeight: '700', fontSize: 13 }}>
+            📷  Photo Mode
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Mode Indicator Label ─────────────────────────────────────────── */}
+      <View style={{ alignItems: 'center', marginBottom: 4 }}>
+        <Text style={{ color: isVideoMode ? '#22c55e' : '#a78bfa', fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>
+          {isVideoMode ? '⚡ Video Mode — Live Scanning (1s interval)' : '🖼  Photo Mode — Manual Capture'}
+        </Text>
+      </View>
+
+      {/* ── Camera Preview ─────────────────────────────────────────────────── */}
+      <View style={{
+        flex: 1, margin: 12, borderRadius: 20, overflow: 'hidden',
+        borderWidth: 2,
+        borderColor: isVideoMode
+          ? (isScanning ? '#22c55e' : '#334155')
+          : '#7c3aed',
+      }}>
         <CameraView style={{ flex: 1 }} facing={facing} ref={cameraRef}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <View style={{ width: 200, height: 240, borderRadius: 16, borderWidth: 2, borderStyle: 'dashed',
-              borderColor: isScanning ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.25)',
-              justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 12 }}>
+            <View style={{
+              width: 200, height: 240, borderRadius: 16, borderWidth: 2, borderStyle: 'dashed',
+              borderColor: isVideoMode
+                ? (isScanning ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.25)')
+                : 'rgba(167,139,250,0.7)',
+              justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 12,
+            }}>
               <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>
-                {isScanning ? 'Keep faces in frame' : 'Press Start to begin'}
+                {isVideoMode
+                  ? (isScanning ? 'Keep faces in frame' : 'Press Start to begin')
+                  : 'Tap Capture to scan'
+                }
               </Text>
             </View>
           </View>
+
+          {/* Flip button */}
           <TouchableOpacity
             style={{ position: 'absolute', bottom: 14, right: 14, backgroundColor: 'rgba(0,0,0,0.55)', padding: 8, borderRadius: 8 }}
             onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}
           >
             <Text style={{ color: 'white', fontSize: 12 }}>🔄 Flip</Text>
           </TouchableOpacity>
-          {isUploading && (
-            <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: 'rgba(37,99,235,0.85)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, flexDirection: 'row', alignItems: 'center' }}>
+
+          {/* Processing overlay — shows while API call is in progress */}
+          {isProcessing && (
+            <View style={{
+              position: 'absolute', top: 12, left: 12,
+              backgroundColor: isVideoMode ? 'rgba(37,99,235,0.85)' : 'rgba(124,58,237,0.85)',
+              paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
+              flexDirection: 'row', alignItems: 'center',
+            }}>
               <ActivityIndicator size="small" color="white" style={{ marginRight: 6 }} />
-              <Text style={{ color: 'white', fontSize: 11, fontWeight: '600' }}>Analyzing…</Text>
+              <Text style={{ color: 'white', fontSize: 11, fontWeight: '600' }}>
+                {isVideoMode ? 'Analyzing…' : 'Processing…'}
+              </Text>
             </View>
           )}
         </CameraView>
       </View>
 
-      {/* Status Badge */}
-      <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: S_BG[statusType], padding: 10, borderRadius: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
-        {isScanning && statusType === 'scanning' && <ActivityIndicator size="small" color={S_COLOR[statusType]} style={{ marginRight: 8 }} />}
+      {/* ── Status Badge ─────────────────────────────────────────────────── */}
+      <View style={{
+        marginHorizontal: 16, marginBottom: 8,
+        backgroundColor: S_BG[statusType], padding: 10, borderRadius: 10,
+        flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+      }}>
+        {isProcessing && statusType === 'scanning' && (
+          <ActivityIndicator size="small" color={S_COLOR[statusType]} style={{ marginRight: 8 }} />
+        )}
         <Text style={{ color: S_COLOR[statusType], fontWeight: '700', fontSize: 14 }}>{scanStatus}</Text>
       </View>
 
-      {/* Marked Students */}
-      <View style={{ marginHorizontal: 16, marginBottom: 8, maxHeight: 130 }}>
+      {/* ── Marked Students List ─────────────────────────────────────────── */}
+      <View style={{ marginHorizontal: 16, marginBottom: 8, maxHeight: 120 }}>
         <Text style={{ color: '#94a3b8', fontSize: 10, fontWeight: '700', letterSpacing: 1, marginBottom: 6 }}>
           MARKED PRESENT ({markedStudents.length})
         </Text>
         {markedStudents.length === 0
-          ? <Text style={{ color: '#475569', fontSize: 12, fontStyle: 'italic' }}>No students marked yet — start scanning.</Text>
+          ? <Text style={{ color: '#475569', fontSize: 12, fontStyle: 'italic' }}>No students marked yet.</Text>
           : <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled>
               {markedStudents.map((s, i) => (
-                <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1e293b', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, marginBottom: 4 }}>
+                <View key={i} style={{
+                  flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                  backgroundColor: '#1e293b', paddingVertical: 7, paddingHorizontal: 10,
+                  borderRadius: 8, marginBottom: 4,
+                }}>
                   <Text style={{ color: '#22c55e', fontWeight: '600', fontSize: 13 }}>✅  {s.name}</Text>
                   <Text style={{ color: '#64748b', fontSize: 11 }}>{s.time}</Text>
                 </View>
@@ -1205,17 +1353,42 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
         }
       </View>
 
-      {/* Action Buttons */}
+      {/* ── Action Buttons ───────────────────────────────────────────────── */}
       <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingBottom: 20 }}>
-        {!isScanning
-          ? <TouchableOpacity style={[styles.primaryButton, { flex: 1, backgroundColor: '#16a34a' }]} onPress={startScanning}>
-              <Text style={styles.primaryButtonText}>▶  Start Scanning</Text>
-            </TouchableOpacity>
-          : <TouchableOpacity style={[styles.primaryButton, { flex: 1, backgroundColor: '#d97706' }]} onPress={pauseScanning}>
-              <Text style={styles.primaryButtonText}>⏸  Pause</Text>
-            </TouchableOpacity>
-        }
-        <TouchableOpacity style={[styles.primaryButton, { flex: 1, backgroundColor: '#dc2626' }]} onPress={handleStopSession}>
+
+        {/* VIDEO MODE: Start / Pause  |  PHOTO MODE: single Capture button */}
+        {isVideoMode ? (
+          !isScanning
+            ? <TouchableOpacity
+                style={[styles.primaryButton, { flex: 1, backgroundColor: '#16a34a' }]}
+                onPress={startVideoScanning}
+              >
+                <Text style={styles.primaryButtonText}>▶  Start Scanning</Text>
+              </TouchableOpacity>
+            : <TouchableOpacity
+                style={[styles.primaryButton, { flex: 1, backgroundColor: '#d97706' }]}
+                onPress={pauseVideoScanning}
+              >
+                <Text style={styles.primaryButtonText}>⏸  Pause</Text>
+              </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.primaryButton, { flex: 1, backgroundColor: isProcessing ? '#6b7280' : '#7c3aed' }]}
+            onPress={capturePhotoManual}
+            disabled={isProcessing}
+          >
+            {isProcessing
+              ? <ActivityIndicator color="white" />
+              : <Text style={styles.primaryButtonText}>📷  Capture & Scan</Text>
+            }
+          </TouchableOpacity>
+        )}
+
+        {/* Stop Session button (always visible) */}
+        <TouchableOpacity
+          style={[styles.primaryButton, { flex: 1, backgroundColor: '#dc2626' }]}
+          onPress={handleStopSession}
+        >
           <Text style={styles.primaryButtonText}>⏹  Stop Session</Text>
         </TouchableOpacity>
       </View>

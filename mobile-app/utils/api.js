@@ -4,7 +4,7 @@ import { File, Directory, Paths } from 'expo-file-system/next';
 import * as Sharing from 'expo-sharing';
 
 // Backend server URL - ensure your mobile device is on the same network
-const BASE_URL = 'http://192.168.29.56:5000';
+const BASE_URL = 'http://192.168.167.145:5000';
 
 
 const getHeaders = async () => {
