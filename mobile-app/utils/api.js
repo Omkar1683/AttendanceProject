@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
-import { File, Directory, Paths } from 'expo-file-system/next';
 import * as Sharing from 'expo-sharing';
 
 // Backend server URL - ensure your mobile device is on the same network
-const BASE_URL = 'http://192.168.167.145:5000';
+const BASE_URL = 'http://10.133.2.70:5000';
+const WS_URL   = 'ws://10.133.2.70:5000';  // WebSocket base (same host, ws:// scheme)
 
 
 const getHeaders = async () => {
@@ -55,6 +55,118 @@ export const api = {
         const headers = await getHeaders();
         const response = await fetch(`${BASE_URL}/classes?teacher_id=${teacherId}`, { headers });
         return response.json();
+    },
+
+    // ── Queue-based scanning pipeline ─────────────────────────────────────────
+
+    /**
+     * Fire-and-forget frame enqueue.
+     * Posts a camera frame to the backend queue and returns immediately.
+     * Recognition happens asynchronously in a background worker.
+     *
+     * @param {string} frameUri   - Local URI from expo-camera takePictureAsync()
+     * @param {string} sessionId  - Active session ID
+     * @returns {Promise<{status: 'queued'|'full'|'error'}>}
+     */
+    enqueueFrame: async (frameUri, sessionId) => {
+        const form = new FormData();
+        form.append('file', { uri: frameUri, type: 'image/jpeg', name: 'frame.jpg' });
+        form.append('session_id', String(sessionId));
+        try {
+            const res = await fetch(`${BASE_URL}/scan/enqueue`, {
+                method: 'POST',
+                body: form,
+                // Do NOT set Content-Type manually — fetch sets multipart boundary
+            });
+            return res.json();
+        } catch {
+            return { status: 'error' };
+        }
+    },
+
+    /**
+     * Poll the backend queue counters (fallback when WebSocket is unavailable).
+     * @returns {Promise<{queued, processing, completed, failed}>}
+     */
+    getQueueStatus: async (sessionId = '') => {
+        try {
+            const headers = await getHeaders();
+            const query = sessionId ? `?session_id=${sessionId}` : '';
+            const res = await fetch(`${BASE_URL}/queue/status${query}`, { headers });
+            return res.json();
+        } catch {
+            return { queued: 0, processing: 0, completed: 0, failed: 0, present_count: 0, marked_students: [] };
+        }
+    },
+
+    /**
+     * Open a WebSocket connection and join a session room.
+     * The backend (Flask-SocketIO) will push `attendance_update` events.
+     *
+     * @param {string}   sessionId   - Active session ID to subscribe to
+     * @param {function} onUpdate    - Called with {student_name, present_count, worker, ...}
+     * @param {function} onStatus    - Called with {queued, processing, completed, failed}
+     * @returns {{ close: function }} - Call .close() to disconnect
+     */
+    connectSocket: (sessionId, onUpdate, onStatus) => {
+        const wsUrl = `${WS_URL}/socket.io/?EIO=4&transport=websocket`;
+        let ws;
+        let closed = false;
+
+        const connect = () => {
+            if (closed) return;
+            ws = new WebSocket(wsUrl);
+
+            const sendJoin = () => {
+                try {
+                    ws.send(`42["join_session",{"session_id":"${sessionId}"}]`);
+                } catch (_) {}
+            };
+
+            ws.onopen = () => {
+                console.log('[Socket] Connected');
+                sendJoin();
+            };
+
+            ws.onmessage = (event) => {
+                const msg = event.data;
+                // Engine.IO / Socket.IO handshake packet ('0' or '40')
+                if (typeof msg === 'string' && (msg.startsWith('0') || msg.startsWith('40'))) {
+                    sendJoin();
+                    return;
+                }
+                // Socket.IO heartbeat ping: respond with pong
+                if (msg === '2') { ws.send('3'); return; }
+                // Data messages start with '42'
+                if (typeof msg === 'string' && msg.startsWith('42')) {
+                    try {
+                        const [eventName, payload] = JSON.parse(msg.slice(2));
+                        if (eventName === 'attendance_update' && onUpdate) onUpdate(payload);
+                        if (eventName === 'queue_status' && onStatus) onStatus(payload);
+                    } catch { /* ignore malformed */ }
+                }
+            };
+
+            ws.onclose = () => {
+                if (!closed) {
+                    console.log('[Socket] Disconnected — reconnecting in 2s');
+                    setTimeout(connect, 2000);
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.warn('[Socket] Error:', err.message);
+            };
+        };
+
+        connect();
+
+        return {
+            close: () => {
+                closed = true;
+                ws && ws.close();
+            },
+        };
     },
 
     // ── Create Subject/Class ──────────────────────────────────────────────────────
@@ -238,17 +350,19 @@ export const api = {
             throw new Error(msg);
         }
 
-        // ── Step 4: Save using NEW File API (expo-file-system/next) ───────────
-        // Paths.document is the app's document directory (persistent, shareable)
-        const csvFile = new File(Paths.document, fileName);
+        // ── Step 4: Save file using stable expo-file-system API ──────────────
+        const fileUri = FileSystem.documentDirectory + fileName;
         try {
-            csvFile.write(csvText);
+            await FileSystem.writeAsStringAsync(fileUri, csvText, {
+                encoding: FileSystem.EncodingType.UTF8,
+            });
         } catch (writeError) {
             throw new Error(`Failed to save file: ${writeError.message}`);
         }
 
         // ── Step 5: Verify file was written ──────────────────────────────────
-        if (!csvFile.exists || csvFile.size === 0) {
+        const fileInfo = await FileSystem.getInfoAsync(fileUri);
+        if (!fileInfo.exists || fileInfo.size === 0) {
             throw new Error('File was saved but appears to be empty. Please try again.');
         }
 
@@ -258,13 +372,13 @@ export const api = {
             throw new Error('Sharing is not available on this device.');
         }
 
-        await Sharing.shareAsync(csvFile.uri, {
+        await Sharing.shareAsync(fileUri, {
             mimeType: 'text/csv',
             dialogTitle: `Share ${fileName}`,
             UTI: 'public.comma-separated-values-text', // iOS only
         });
 
-        return csvFile.uri;
+        return fileUri;
     },
 
     getStudentTimeline: async (month, year) => {

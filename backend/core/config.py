@@ -7,7 +7,12 @@ Set APP_ENV environment variable to switch between environments:
   - APP_ENV=production
 """
 import os
+from pathlib import Path
 from urllib.parse import quote_plus
+from dotenv import load_dotenv
+
+# Load .env from the backend directory (works regardless of where app is launched from)
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env')
 
 
 class BaseConfig:
@@ -17,12 +22,12 @@ class BaseConfig:
     TESTING = False
 
     # JWT
-    JWT_SECRET = os.getenv('JWT_SECRET', 'change-me-in-production-use-a-long-random-string')
+    JWT_SECRET      = os.getenv('JWT_SECRET')
     JWT_EXPIRY_DAYS = int(os.getenv('JWT_EXPIRY_DAYS', 7))
 
     # MongoDB
-    MONGO_USERNAME = os.getenv('MONGO_USERNAME', 'devesh')
-    MONGO_PASSWORD = os.getenv('MONGO_PASSWORD', 'Devesh_1234')
+    MONGO_USERNAME = os.getenv('MONGO_USERNAME')
+    MONGO_PASSWORD = os.getenv('MONGO_PASSWORD')
     MONGO_HOST     = os.getenv('MONGO_HOST', 'attendancecluster.uucwump.mongodb.net')
     MONGO_DB_NAME  = os.getenv('MONGO_DB_NAME', 'attendai_db')
     MONGO_APP_NAME = os.getenv('MONGO_APP_NAME', 'AttendanceCluster')
@@ -37,18 +42,18 @@ class BaseConfig:
         )
 
     # Face recognition
-    FACE_MATCH_THRESHOLD = float(os.getenv('FACE_MATCH_THRESHOLD', 0.50))
+    FACE_MATCH_THRESHOLD = float(os.getenv('FACE_MATCH_THRESHOLD', 0.60))
 
     # CORS
     CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')
 
     # Mail
-    MAIL_SERVER   = 'smtp.gmail.com'
-    MAIL_PORT     = 587
-    MAIL_USE_TLS  = True
-    MAIL_USERNAME = os.getenv('MAIL_USERNAME', 'attendai1234@gmail.com')   # Gmail address
-    MAIL_PASSWORD = os.getenv('MAIL_PASSWORD', 'dsql pdsd nmco pgmq')      # Gmail App Password
-    MAIL_DEFAULT_SENDER = os.getenv('MAIL_USERNAME', 'attendai1234@gmail.com')
+    MAIL_SERVER         = 'smtp.gmail.com'
+    MAIL_PORT           = 587
+    MAIL_USE_TLS        = True
+    MAIL_USERNAME       = os.getenv('MAIL_USERNAME')   # Gmail address
+    MAIL_PASSWORD       = os.getenv('MAIL_PASSWORD')   # Gmail App Password (set in .env)
+    MAIL_DEFAULT_SENDER = os.getenv('MAIL_USERNAME')
 
 
 class DevelopmentConfig(BaseConfig):

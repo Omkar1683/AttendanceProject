@@ -6,18 +6,18 @@ Usage
 Development:
     python app.py
 
-Production (Gunicorn):
-    gunicorn wsgi:app
+Production (Gunicorn with threading worker):
+    gunicorn --worker-class=gthread --threads=4 wsgi:app
 
 Environment variables:
     APP_ENV          development | production   (default: development)
     JWT_SECRET       Long random string         (REQUIRED in production)
-    MONGO_USERNAME   MongoDB Atlas username      (default: devesh)
-    MONGO_PASSWORD   MongoDB Atlas password      (default: Devesh_1234)
+    MONGO_USERNAME   MongoDB Atlas username
+    MONGO_PASSWORD   MongoDB Atlas password
     MONGO_HOST       Atlas cluster host
     MONGO_DB_NAME    Database name              (default: attendai_db)
     MONGO_APP_NAME   Atlas app name
-    FACE_MATCH_THRESHOLD  0.0–1.0              (default: 0.50)
+    FACE_MATCH_THRESHOLD  0.0-1.0              (default: 0.50)
 """
 import os
 from flask import Flask
@@ -28,6 +28,8 @@ from core.config import get_config
 from core.security import init_security
 from database.connection import init_db
 from services.face_service import face_service
+from services.socket_service import init_socketio
+from workers.attendance_worker import start_workers
 
 # ── Blueprints ────────────────────────────────────────────────────────────────
 from routes.auth_routes         import auth_bp
@@ -36,6 +38,7 @@ from routes.attendance_routes   import attendance_bp
 from routes.analytics_routes    import analytics_bp
 from routes.notification_routes import notification_bp
 from routes.student_routes      import student_bp
+
 mail = Mail()
 
 
@@ -61,6 +64,9 @@ def create_app(config_name: str = None) -> Flask:
     # ── Initialize Mail ───────────────────────────────────────────────────────
     mail.init_app(app)
 
+    # ── Initialize WebSocket (Flask-SocketIO) ─────────────────────────────────
+    init_socketio(app)
+
     # ── Boot security layer ───────────────────────────────────────────────────
     init_security(
         secret_key=Config.JWT_SECRET,
@@ -70,17 +76,20 @@ def create_app(config_name: str = None) -> Flask:
     # ── Boot database ─────────────────────────────────────────────────────────
     db = init_db(Config.get_mongo_uri(), Config.MONGO_DB_NAME)
     if db is None:
-        print("⚠️  Warning: Running WITHOUT database connection")
+        print("WARNING: Running WITHOUT database connection")
 
     # ── Boot face recognition cache ───────────────────────────────────────────
     face_service.match_threshold = Config.FACE_MATCH_THRESHOLD
     if db is not None:
         face_service.load_faces()
 
+    # ── Start background queue workers ────────────────────────────────────────
+    start_workers()
+
     # ── Register blueprints ───────────────────────────────────────────────────
     app.register_blueprint(auth_bp)           # /login, /signup, /students/register, /classes
     app.register_blueprint(session_bp)        # /sessions/create, /sessions/stop
-    app.register_blueprint(attendance_bp)     # /scan, /attendance/manual
+    app.register_blueprint(attendance_bp)     # /scan, /scan/enqueue, /queue/status
     app.register_blueprint(analytics_bp)      # /analytics/*, /reports/*
     app.register_blueprint(notification_bp)   # /notifications/send
     app.register_blueprint(student_bp)        # /student/* (self-service student APIs)
@@ -89,5 +98,7 @@ def create_app(config_name: str = None) -> Flask:
 
 
 if __name__ == '__main__':
+    import services.socket_service as socket_service
     app = create_app()
-    app.run(host='0.0.0.0', port=5000, debug=app.config.get('DEBUG', True))
+    # Use socketio.run() instead of app.run() so WebSocket handshakes work
+    socket_service.socketio.run(app, host='0.0.0.0', port=5000, debug=app.config.get('DEBUG', True), allow_unsafe_werkzeug=True)

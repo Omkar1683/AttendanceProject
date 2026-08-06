@@ -19,14 +19,14 @@ def init_db(mongo_uri: str, db_name: str) -> Database | None:
     """
     global _client, _db
     try:
-        _client = MongoClient(mongo_uri)
+        _client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
         _db = _client[db_name]
         # Quick connection test
         _client.admin.command('ping')
-        print("✅ Connected to MongoDB Atlas")
+        print("[DB] Connected to MongoDB Atlas")
         return _db
     except Exception as exc:
-        print(f"❌ MongoDB connection failed: {exc}")
+        print(f"[DB] MongoDB connection failed: {exc}")
         return None
 
 

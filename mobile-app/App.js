@@ -15,18 +15,19 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import {
-  Camera,
-  BarChart3,
-  Home,
-  Settings,
-  ChevronLeft,
-  Bell,
-  Calendar,
-  LogOut,
-  ChevronDown,
-  Download
-} from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
+
+// Icon shim: maps lucide icon components to Ionicons equivalents
+const Camera     = ({ size, color, style }) => <Ionicons name="camera-outline"         size={size} color={color} style={style} />;
+const BarChart3  = ({ size, color, style }) => <Ionicons name="bar-chart-outline"      size={size} color={color} style={style} />;
+const Home       = ({ size, color, style }) => <Ionicons name="home-outline"           size={size} color={color} style={style} />;
+const Settings   = ({ size, color, style }) => <Ionicons name="settings-outline"       size={size} color={color} style={style} />;
+const ChevronLeft= ({ size, color, style }) => <Ionicons name="chevron-back-outline"   size={size} color={color} style={style} />;
+const Bell       = ({ size, color, style }) => <Ionicons name="notifications-outline"  size={size} color={color} style={style} />;
+const Calendar   = ({ size, color, style }) => <Ionicons name="calendar-outline"       size={size} color={color} style={style} />;
+const LogOut     = ({ size, color, style }) => <Ionicons name="log-out-outline"        size={size} color={color} style={style} />;
+const ChevronDown= ({ size, color, style }) => <Ionicons name="chevron-down-outline"   size={size} color={color} style={style} />;
+const Download   = ({ size, color, style }) => <Ionicons name="download-outline"       size={size} color={color} style={style} />;
 import { api } from './utils/api';
 
 // --- MAIN APP COMPONENT ---
@@ -867,7 +868,7 @@ const RegisterStudentScreen = ({ navigateTo }) => {
       const scanResult = await response.json();
 
       if (scanResult.status === 'error' || !scanResult.people || scanResult.people.length === 0) {
-        Alert.alert('Error', 'No face detected in photo. Please try again.');
+        Alert.alert('Error', scanResult.message || 'No face detected in photo. Please try again.');
         setPhoto(null);
         return;
       }
@@ -1039,163 +1040,193 @@ const RegisterStudentScreen = ({ navigateTo }) => {
 const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
   const [permission, requestPermission] = useCameraPermissions();
 
-  // ── Mode: 'video' | 'photo' ────────────────────────────────────────────────
-  const [scanMode, setScanMode]             = useState('video');   // default: Video Mode
+  // ── Mode ───────────────────────────────────────────────────────────────────
+  const [scanMode, setScanMode] = useState('video');
 
-  // ── Shared state ───────────────────────────────────────────────────────────
+  // ── UI State ───────────────────────────────────────────────────────────────
   const [isScanning, setIsScanning]         = useState(false);
   const [scanStatus, setScanStatus]         = useState('Ready · Press Start');
   const [statusType, setStatusType]         = useState('idle');
   const [markedStudents, setMarkedStudents] = useState([]);
   const [facing, setFacing]                 = useState('back');
-  const [isProcessing, setIsProcessing]     = useState(false);   // API guard
+
+  // ── Queue Stats (live from backend) ───────────────────────────────────────
+  const [queueStats, setQueueStats] = useState({ queued: 0, processing: 0, completed: 0, failed: 0 });
+  const [socketConnected, setSocketConnected] = useState(false);
 
   // ── Refs ───────────────────────────────────────────────────────────────────
-  const cameraRef        = useRef(null);
-  const scanIntervalRef  = useRef(null);
-  const markedIdsRef     = useRef(new Set());
-  const isProcessingRef  = useRef(false);  // ref mirror to avoid stale closures
+  const cameraRef       = useRef(null);
+  const captureInterval = useRef(null);   // setInterval handle for frame capture loop
+  const isScanningRef   = useRef(false);
+  const markedIdsRef    = useRef(new Set());
+  const socketRef       = useRef(null);   // WebSocket connection handle
+  const pollRef         = useRef(null);   // polling interval handle (fallback)
 
-  // ── Cleanup on unmount ─────────────────────────────────────────────────────
+  // ── WebSocket + polling setup ─────────────────────────────────────────────
   useEffect(() => {
-    return () => { if (scanIntervalRef.current) clearInterval(scanIntervalRef.current); };
-  }, []);
+    if (!currentSession) return;
 
-  // ── When mode changes, stop any active scanning ────────────────────────────
+    // ── WebSocket (primary) ────────────────────────────────────────────────
+    const handleUpdate = (payload) => {
+      const { student_id, student_name, present_count, worker } = payload;
+      if (!student_id || !student_name) return;
+
+      // UI dedup — only add to list if new
+      if (!markedIdsRef.current.has(student_id)) {
+        markedIdsRef.current.add(student_id);
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setMarkedStudents(prev => [{ name: student_name, student_id, time, worker }, ...prev]);
+        setScanStatus(`✅ ${student_name} marked present`);
+        setStatusType('marked');
+      }
+    };
+
+    const handleStatus = (stats) => {
+      setQueueStats(stats);
+    };
+
+    const socket = api.connectSocket(currentSession, handleUpdate, handleStatus);
+    socketRef.current = socket;
+    setSocketConnected(true);
+
+    // ── Polling fallback (every 1 s) — keeps queue stats updated even if WS ──
+    // doesn't fire queue_status events continuously
+    pollRef.current = setInterval(async () => {
+      const stats = await api.getQueueStatus(currentSession);
+      setQueueStats(stats);
+      if (stats && Array.isArray(stats.marked_students) && stats.marked_students.length > 0) {
+        stats.marked_students.forEach(s => {
+          if (s.student_id && s.student_name && !markedIdsRef.current.has(s.student_id)) {
+            markedIdsRef.current.add(s.student_id);
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            setMarkedStudents(prev => [{ name: s.student_name, student_id: s.student_id, time, worker: 'Sync' }, ...prev]);
+            setScanStatus(`✅ ${s.student_name} marked present`);
+            setStatusType('marked');
+          }
+        });
+      }
+    }, 1000);
+
+    return () => {
+      // Cleanup on unmount or session change
+      socket.close();
+      if (pollRef.current) clearInterval(pollRef.current);
+      setSocketConnected(false);
+    };
+  }, [currentSession]);
+
+  // ── Stop capture loop when mode changes ───────────────────────────────────
   useEffect(() => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
-    }
-    setIsScanning(false);
+    stopCapture();
     setScanStatus(scanMode === 'video' ? 'Video Mode · Press Start' : 'Photo Mode · Press Capture');
     setStatusType('idle');
   }, [scanMode]);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  //  Core: capture one frame and send to backend
-  // ─────────────────────────────────────────────────────────────────────────
-  const captureAndScan = async () => {
-    // isProcessing guard — prevents API overload
-    if (isProcessingRef.current || !cameraRef.current) return;
+  // ── Cleanup on unmount ────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      stopCapture();
+    };
+  }, []);
 
-    isProcessingRef.current = true;
-    setIsProcessing(true);
-    setScanStatus('Processing…');
-    setStatusType('scanning');
-
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Core: capture one frame and ENQUEUE it (fire-and-forget)
+  //  The camera never waits for recognition — it just enqueues and moves on.
+  // ─────────────────────────────────────────────────────────────────────────
+  const captureAndEnqueue = async () => {
+    if (!cameraRef.current) return;
     try {
-      // skipProcessing: true → no shutter animation, no preview update → smooth video feel
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.4,
+        quality: 0.6,        // optimised for face_recognition (~200-300 KB)
         base64: false,
-        skipProcessing: true,   // ← suppresses flash / shutter effect
+        skipProcessing: true, // skip camera post-processing for speed
       });
+      if (!photo?.uri) return;
 
-      const form = new FormData();
-      form.append('file', { uri: photo.uri, type: 'image/jpeg', name: 'frame.jpg' });
-      form.append('session_id', currentSession);
-
-      const res  = await fetch(`${api.BASE_URL}/scan`, {
-        method: 'POST',
-        body: form,
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      const data = await res.json();
-
-      if (data.status === 'error') {
-        setScanStatus(data.message === 'No faces detected' ? '👁  No face in frame' : `⚠ ${data.message}`);
-        setStatusType('error');
-        return;
-      }
-
-      if (data.people?.length > 0) {
-        data.people.forEach(person => {
-          if (person.name !== 'Unknown' && person.status === 'Present') {
-            if (!markedIdsRef.current.has(person.student_id)) {
-              markedIdsRef.current.add(person.student_id);
-              const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              setMarkedStudents(prev => [{ name: person.name, student_id: person.student_id, time }, ...prev]);
-              setScanStatus(`✅ Face Detected: ${person.name}`);
-              setStatusType('marked');
-            } else {
-              setScanStatus(`↩ Already marked: ${person.name}`);
-              setStatusType('detected');
-            }
-          } else if (person.name === 'Unknown') {
-            setScanStatus('❓ Unknown face');
-            setStatusType('unknown');
-          }
-        });
-      } else {
-        // No people array or empty — back to scanning status in video mode
-        if (scanMode === 'video' && isScanning) {
-          setScanStatus('Scanning…');
+      // Fire-and-forget: do NOT await the response before capturing next frame
+      api.enqueueFrame(photo.uri, currentSession).then(res => {
+        if (res.status === 'queued') {
+          setScanStatus('📤 Frame queued — workers scanning…');
           setStatusType('scanning');
+        } else if (res.status === 'full') {
+          setScanStatus('⚠ Queue full — workers busy');
+          setStatusType('error');
         }
-      }
-    } catch {
-      setScanStatus('⚠ Connection error');
-      setStatusType('error');
-    } finally {
-      isProcessingRef.current = false;
-      setIsProcessing(false);
+      }).catch(() => {/* network error — silent */});
+
+    } catch (err) {
+      console.warn('[captureAndEnqueue] Camera error:', err?.message);
     }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  VIDEO MODE controls
+  //  Start / stop the 700 ms capture interval
   // ─────────────────────────────────────────────────────────────────────────
-  const startVideoScanning = () => {
+  const startCapture = () => {
     if (!currentSession) {
       Alert.alert('No Session', 'Go back and start an attendance session first.');
       return;
     }
+    isScanningRef.current = true;
     setIsScanning(true);
-    setScanStatus('Scanning…');
+    setScanStatus('📤 Streaming frames to workers…');
     setStatusType('scanning');
-    // Capture every 1 second; guard prevents overlapping requests
-    scanIntervalRef.current = setInterval(captureAndScan, 1000);
+
+    // Capture first frame immediately
+    captureAndEnqueue();
+
+    // Then every 700 ms — no waiting for the API
+    captureInterval.current = setInterval(() => {
+      if (isScanningRef.current) captureAndEnqueue();
+    }, 700);
   };
 
-  const pauseVideoScanning = () => {
-    if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; }
+  const stopCapture = () => {
+    isScanningRef.current = false;
+    if (captureInterval.current) {
+      clearInterval(captureInterval.current);
+      captureInterval.current = null;
+    }
     setIsScanning(false);
+  };
+
+  const pauseCapture = () => {
+    stopCapture();
     setScanStatus('Paused');
     setStatusType('idle');
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  PHOTO MODE controls
+  //  Photo mode: single manual capture
   // ─────────────────────────────────────────────────────────────────────────
   const capturePhotoManual = () => {
     if (!currentSession) {
       Alert.alert('No Session', 'Go back and start an attendance session first.');
       return;
     }
-    captureAndScan();
+    captureAndEnqueue();
   };
 
   // ─────────────────────────────────────────────────────────────────────────
   //  Stop session
   // ─────────────────────────────────────────────────────────────────────────
   const handleStopSession = async () => {
-    pauseVideoScanning();
+    pauseCapture();
     try {
       await api.stopSession(currentSession);
-      Alert.alert('✅ Session Complete',
+      Alert.alert(
+        '✅ Session Complete',
         `${markedStudents.length} student${markedStudents.length !== 1 ? 's' : ''} marked present.`,
-        [{ text: 'Done', onPress: () => navigateTo('TeacherDashboard') }]);
+        [{ text: 'Done', onPress: () => navigateTo('TeacherDashboard') }]
+      );
     } catch { Alert.alert('Error', 'Failed to stop session'); }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  //  Status color maps
-  // ─────────────────────────────────────────────────────────────────────────
-  const S_COLOR = { idle: '#6b7280', scanning: '#2563eb', detected: '#16a34a', marked: '#059669', unknown: '#d97706', error: '#dc2626' };
-  const S_BG    = { idle: '#f3f4f6', scanning: '#eff6ff', detected: '#dcfce7', marked: '#d1fae5', unknown: '#fef3c7', error: '#fee2e2' };
+  // ── Status colour maps ────────────────────────────────────────────────────
+  const S_COLOR = { idle: '#6b7280', scanning: '#2563eb', marked: '#059669', error: '#dc2626', unknown: '#d97706' };
+  const S_BG    = { idle: '#f3f4f6', scanning: '#eff6ff', marked: '#d1fae5', error: '#fee2e2', unknown: '#fef3c7' };
 
-  // ── Early returns (after all hooks above) ─────────────────────────────────
+  // ── Permission guard ──────────────────────────────────────────────────────
   if (!permission) return <View />;
   if (!permission.granted) {
     return (
@@ -1213,7 +1244,7 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
   return (
     <View style={[styles.screenContainer, { backgroundColor: '#0f172a' }]}>
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <View style={[styles.header, { backgroundColor: '#1e293b', borderBottomWidth: 0 }]}>
         <TouchableOpacity onPress={() => navigateTo('TeacherDashboard')} style={{ padding: 10, marginRight: 8 }}>
           <ChevronLeft color="white" size={30} />
@@ -1224,57 +1255,66 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
           </Text>
           <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 1 }}>
             {isVideoMode
-              ? (isScanning ? '🔴 LIVE SCANNING' : '⏸ PAUSED')
+              ? (isScanning ? '🔴 LIVE · Workers processing' : '⏸ PAUSED')
               : '📷 MANUAL CAPTURE'
             }  •  {markedStudents.length} marked present
           </Text>
         </View>
-        <View style={{ width: 50 }} />
+        {/* WebSocket indicator */}
+        <View style={{ width: 50, alignItems: 'center' }}>
+          <View style={{
+            width: 10, height: 10, borderRadius: 5,
+            backgroundColor: socketConnected ? '#22c55e' : '#6b7280',
+          }} />
+          <Text style={{ color: '#64748b', fontSize: 9, marginTop: 2 }}>
+            {socketConnected ? 'LIVE' : 'POLL'}
+          </Text>
+        </View>
       </View>
 
-      {/* ── Mode Toggle ────────────────────────────────────────────────────── */}
+      {/* ── Mode Toggle ─────────────────────────────────────────────────── */}
       <View style={{
         flexDirection: 'row', marginHorizontal: 16, marginTop: 10, marginBottom: 4,
         backgroundColor: '#1e293b', borderRadius: 12, padding: 4,
       }}>
         <TouchableOpacity
-          style={{
-            flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center',
-            backgroundColor: isVideoMode ? '#2563eb' : 'transparent',
-          }}
+          style={{ flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center', backgroundColor: isVideoMode ? '#2563eb' : 'transparent' }}
           onPress={() => setScanMode('video')}
         >
-          <Text style={{ color: isVideoMode ? 'white' : '#64748b', fontWeight: '700', fontSize: 13 }}>
-            📹  Video Mode
-          </Text>
+          <Text style={{ color: isVideoMode ? 'white' : '#64748b', fontWeight: '700', fontSize: 13 }}>📹  Video Mode</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={{
-            flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center',
-            backgroundColor: !isVideoMode ? '#7c3aed' : 'transparent',
-          }}
+          style={{ flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center', backgroundColor: !isVideoMode ? '#7c3aed' : 'transparent' }}
           onPress={() => setScanMode('photo')}
         >
-          <Text style={{ color: !isVideoMode ? 'white' : '#64748b', fontWeight: '700', fontSize: 13 }}>
-            📷  Photo Mode
-          </Text>
+          <Text style={{ color: !isVideoMode ? 'white' : '#64748b', fontWeight: '700', fontSize: 13 }}>📷  Photo Mode</Text>
         </TouchableOpacity>
       </View>
 
-      {/* ── Mode Indicator Label ─────────────────────────────────────────── */}
-      <View style={{ alignItems: 'center', marginBottom: 4 }}>
-        <Text style={{ color: isVideoMode ? '#22c55e' : '#a78bfa', fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>
-          {isVideoMode ? '⚡ Video Mode — Live Scanning (1s interval)' : '🖼  Photo Mode — Manual Capture'}
-        </Text>
+      {/* ── Queue Stats Bar ──────────────────────────────────────────────── */}
+      <View style={{
+        flexDirection: 'row', marginHorizontal: 16, marginBottom: 6,
+        backgroundColor: '#1e293b', borderRadius: 10, padding: 8,
+        justifyContent: 'space-around',
+      }}>
+        {[
+          { label: 'QUEUED',     value: queueStats.queued,     color: '#60a5fa' },
+          { label: 'PROCESSING', value: queueStats.processing, color: '#f59e0b' },
+          { label: 'DONE',       value: queueStats.completed,  color: '#22c55e' },
+          { label: 'FAILED',     value: queueStats.failed,     color: '#ef4444' },
+        ].map(({ label, value, color }) => (
+          <View key={label} style={{ alignItems: 'center' }}>
+            <Text style={{ color, fontWeight: '800', fontSize: 16 }}>{value}</Text>
+            <Text style={{ color: '#475569', fontSize: 9, fontWeight: '600' }}>{label}</Text>
+          </View>
+        ))}
       </View>
 
-      {/* ── Camera Preview ─────────────────────────────────────────────────── */}
+      {/* ── Camera Preview ───────────────────────────────────────────────── */}
       <View style={{
         flex: 1, margin: 12, borderRadius: 20, overflow: 'hidden',
         borderWidth: 2,
-        borderColor: isVideoMode
-          ? (isScanning ? '#22c55e' : '#334155')
-          : '#7c3aed',
+        borderColor: isVideoMode ? (isScanning ? '#22c55e' : '#334155') : '#7c3aed',
       }}>
         <CameraView style={{ flex: 1 }} facing={facing} ref={cameraRef}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -1287,12 +1327,26 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
             }}>
               <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>
                 {isVideoMode
-                  ? (isScanning ? 'Keep faces in frame' : 'Press Start to begin')
-                  : 'Tap Capture to scan'
-                }
+                  ? (isScanning ? 'Streaming to 3 workers…' : 'Press Start to begin')
+                  : 'Tap Capture to scan'}
               </Text>
             </View>
           </View>
+
+          {/* Streaming badge */}
+          {isScanning && (
+            <View style={{
+              position: 'absolute', top: 12, left: 12,
+              backgroundColor: 'rgba(37,99,235,0.85)',
+              paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
+              flexDirection: 'row', alignItems: 'center',
+            }}>
+              <ActivityIndicator size="small" color="white" style={{ marginRight: 6 }} />
+              <Text style={{ color: 'white', fontSize: 11, fontWeight: '600' }}>
+                700ms · 3 Workers
+              </Text>
+            </View>
+          )}
 
           {/* Flip button */}
           <TouchableOpacity
@@ -1301,34 +1355,22 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
           >
             <Text style={{ color: 'white', fontSize: 12 }}>🔄 Flip</Text>
           </TouchableOpacity>
-
-          {/* Processing overlay — shows while API call is in progress */}
-          {isProcessing && (
-            <View style={{
-              position: 'absolute', top: 12, left: 12,
-              backgroundColor: isVideoMode ? 'rgba(37,99,235,0.85)' : 'rgba(124,58,237,0.85)',
-              paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
-              flexDirection: 'row', alignItems: 'center',
-            }}>
-              <ActivityIndicator size="small" color="white" style={{ marginRight: 6 }} />
-              <Text style={{ color: 'white', fontSize: 11, fontWeight: '600' }}>
-                {isVideoMode ? 'Analyzing…' : 'Processing…'}
-              </Text>
-            </View>
-          )}
         </CameraView>
       </View>
 
       {/* ── Status Badge ─────────────────────────────────────────────────── */}
       <View style={{
         marginHorizontal: 16, marginBottom: 8,
-        backgroundColor: S_BG[statusType], padding: 10, borderRadius: 10,
+        backgroundColor: S_BG[statusType] || S_BG.idle,
+        padding: 10, borderRadius: 10,
         flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
       }}>
-        {isProcessing && statusType === 'scanning' && (
-          <ActivityIndicator size="small" color={S_COLOR[statusType]} style={{ marginRight: 8 }} />
+        {statusType === 'scanning' && (
+          <ActivityIndicator size="small" color={S_COLOR.scanning} style={{ marginRight: 8 }} />
         )}
-        <Text style={{ color: S_COLOR[statusType], fontWeight: '700', fontSize: 14 }}>{scanStatus}</Text>
+        <Text style={{ color: S_COLOR[statusType] || S_COLOR.idle, fontWeight: '700', fontSize: 14 }}>
+          {scanStatus}
+        </Text>
       </View>
 
       {/* ── Marked Students List ─────────────────────────────────────────── */}
@@ -1337,7 +1379,7 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
           MARKED PRESENT ({markedStudents.length})
         </Text>
         {markedStudents.length === 0
-          ? <Text style={{ color: '#475569', fontSize: 12, fontStyle: 'italic' }}>No students marked yet.</Text>
+          ? <Text style={{ color: '#475569', fontSize: 12, fontStyle: 'italic' }}>No students marked yet — workers scanning…</Text>
           : <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled>
               {markedStudents.map((s, i) => (
                 <View key={i} style={{
@@ -1345,7 +1387,10 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
                   backgroundColor: '#1e293b', paddingVertical: 7, paddingHorizontal: 10,
                   borderRadius: 8, marginBottom: 4,
                 }}>
-                  <Text style={{ color: '#22c55e', fontWeight: '600', fontSize: 13 }}>✅  {s.name}</Text>
+                  <View>
+                    <Text style={{ color: '#22c55e', fontWeight: '600', fontSize: 13 }}>✅  {s.name}</Text>
+                    {s.worker && <Text style={{ color: '#475569', fontSize: 10 }}>{s.worker}</Text>}
+                  </View>
                   <Text style={{ color: '#64748b', fontSize: 11 }}>{s.time}</Text>
                 </View>
               ))}
@@ -1356,35 +1401,29 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
       {/* ── Action Buttons ───────────────────────────────────────────────── */}
       <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingBottom: 20 }}>
 
-        {/* VIDEO MODE: Start / Pause  |  PHOTO MODE: single Capture button */}
         {isVideoMode ? (
           !isScanning
             ? <TouchableOpacity
                 style={[styles.primaryButton, { flex: 1, backgroundColor: '#16a34a' }]}
-                onPress={startVideoScanning}
+                onPress={startCapture}
               >
                 <Text style={styles.primaryButtonText}>▶  Start Scanning</Text>
               </TouchableOpacity>
             : <TouchableOpacity
                 style={[styles.primaryButton, { flex: 1, backgroundColor: '#d97706' }]}
-                onPress={pauseVideoScanning}
+                onPress={pauseCapture}
               >
                 <Text style={styles.primaryButtonText}>⏸  Pause</Text>
               </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.primaryButton, { flex: 1, backgroundColor: isProcessing ? '#6b7280' : '#7c3aed' }]}
+            style={[styles.primaryButton, { flex: 1, backgroundColor: '#7c3aed' }]}
             onPress={capturePhotoManual}
-            disabled={isProcessing}
           >
-            {isProcessing
-              ? <ActivityIndicator color="white" />
-              : <Text style={styles.primaryButtonText}>📷  Capture & Scan</Text>
-            }
+            <Text style={styles.primaryButtonText}>📷  Capture & Scan</Text>
           </TouchableOpacity>
         )}
 
-        {/* Stop Session button (always visible) */}
         <TouchableOpacity
           style={[styles.primaryButton, { flex: 1, backgroundColor: '#dc2626' }]}
           onPress={handleStopSession}
@@ -1395,6 +1434,7 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
     </View>
   );
 };
+
 
 // --- 4. STUDENT DASHBOARD ---
 const StudentDashboard = ({ navigateTo, userInfo, onLogout }) => {
