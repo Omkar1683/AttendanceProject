@@ -1,0 +1,14 @@
+flask
+flask-cors
+flask-socketio
+face_recognition
+numpy
+opencv-python-headless
+pymongo
+dnspython
+PyJWT
+bcrypt
+python-dotenv
+pandas
+gunicorn
+Flask-Mail
