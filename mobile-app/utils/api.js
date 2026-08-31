@@ -219,6 +219,17 @@ export const api = {
     return response.json();
   },
 
+  // ── Update existing class enrollment & batch ────────────────────────────────
+  updateClass: async (classId, { students, batch }) => {
+    const headers = await getHeaders();
+    const response = await fetch(`${BASE_URL}/classes/${classId}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ students, batch }),
+    });
+    return response.json();
+  },
+
   // ── Get all students (for class assignment picker) ────────────────────────────
   getStudents: async (batch = "") => {
     const headers = await getHeaders();
@@ -455,13 +466,16 @@ export const api = {
   },
 
   // Notifications
-  // NOTE: for 'individual' target, pass the student's email in the `email` param
-  sendNotification: async (classId, target, message, email = null) => {
+  // For 'individual' target: pass student_ids (array) for multi-select, or email (string) for legacy single
+  sendNotification: async (classId, target, message, email = null, studentIds = null) => {
     const headers = await getHeaders();
+    const body = { class_id: classId, target, message };
+    if (email) body.email = email;
+    if (studentIds && studentIds.length > 0) body.student_ids = studentIds;
     const response = await fetch(`${BASE_URL}/notifications/send`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ class_id: classId, target, message, email }),
+      body: JSON.stringify(body),
     });
     return response.json();
   },

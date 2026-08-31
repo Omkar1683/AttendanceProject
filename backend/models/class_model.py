@@ -92,3 +92,25 @@ class ClassModel(BaseModel):
             {'_id': ObjectId(class_id)},
             {'$addToSet': {'students': ObjectId(student_id)}},
         )
+
+    def update_class_details(
+        self,
+        class_id: str,
+        student_ids: List[str],
+        batch: str = None,
+    ) -> bool:
+        """
+        Update the enrolled students list and optionally the batch.
+        Keeps total_students in sync with the actual students array length.
+        Does NOT modify the schema — uses existing fields only.
+        """
+        update = {
+            'students': [ObjectId(sid) for sid in student_ids],
+            'total_students': len(student_ids) if student_ids else 0,
+        }
+        if batch is not None:
+            update['batch'] = batch
+        return self.update_one(
+            {'_id': ObjectId(class_id)},
+            {'$set': update},
+        )

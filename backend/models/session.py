@@ -135,14 +135,31 @@ class AttendanceLogModel(BaseModel):
         marked_by: str = "AI",
         confidence: float = None,
     ) -> Optional[str]:
-        """Upsert an attendance record. Returns the document ID if new, else existing ID."""
+        """Upsert an attendance record. Returns the document ID if new, else existing ID.
+
+        Priority rules:
+          - Manual records are NEVER overwritten by AI scans.
+          - AI records CAN be overwritten by Manual corrections.
+          - AI records are NOT overwritten by subsequent AI scans (dedup).
+        """
         existing = self.find_one({
             'session_id': ObjectId(session_id),
             'student_id': student_id,
         })
 
         if existing:
-            # Existing record — update in place (do NOT increment session scanned count again)
+            # ── Manual override protection ────────────────────────────────
+            # If the existing record was set by a teacher (Manual) and the
+            # incoming write is from AI, refuse the update.
+            if existing.get('marked_by') == 'Manual' and marked_by == 'AI':
+                return None  # Teacher decision preserved
+
+            # If AI→AI and already Present, skip (dedup — no change needed)
+            if (existing.get('marked_by') == 'AI' and marked_by == 'AI'
+                    and existing.get('status') == 'Present' and status == 'Present'):
+                return None
+
+            # Otherwise update in place (Manual→Manual, or Manual overriding AI)
             update_data = {'status': status, 'timestamp': datetime.now(), 'marked_by': marked_by}
             if confidence is not None:
                 update_data['confidence'] = confidence

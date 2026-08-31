@@ -51,17 +51,20 @@ def send_notification(
     email: Optional[str] = None,
     # Legacy: still accepted but ignored for individual target
     student_id: Optional[str] = None,
+    # New: multi-select individual target
+    student_ids: list = None,
 ) -> dict:
     """
     Create a notification record and send emails.
 
     Args:
-        class_id:   Target class ObjectId string.
-        target:     'all' | 'defaulters' | 'critical' | 'individual'
-        message:    Notification text.
-        sent_by:    Teacher user ObjectId string.
-        email:      Student email for 'individual' target (preferred over student_id).
-        student_id: Deprecated — kept for backward compatibility.
+        class_id:    Target class ObjectId string.
+        target:      'all' | 'defaulters' | 'critical' | 'individual'
+        message:     Notification text.
+        sent_by:     Teacher user ObjectId string.
+        email:       Student email for 'individual' target (single legacy).
+        student_id:  Deprecated — kept for backward compatibility.
+        student_ids: List of student ObjectId strings for multi-select individual.
 
     Returns:
         {'ok': True,  'notification_id': str}
@@ -70,10 +73,10 @@ def send_notification(
     if not all([class_id, target, message, sent_by]):
         return {'ok': False, 'message': 'class_id, target, message and sent_by are required', 'code': 400}
 
-    # For individual target, require email (or fall back to student_id for legacy calls)
+    # For individual target, require at least one selection method
     if target == 'individual':
-        if not email and not student_id:
-            return {'ok': False, 'message': 'email is required for individual notifications', 'code': 400}
+        if not student_ids and not email and not student_id:
+            return {'ok': False, 'message': 'Please select at least one student', 'code': 400}
         if email:
             email = email.strip().lower()
             if not _is_valid_email(email):
@@ -86,10 +89,42 @@ def send_notification(
     recipients = []
 
     if target == 'individual':
-        student = None
+        # ── Multi-select: student_ids list (preferred) ────────────────────
+        if student_ids and len(student_ids) > 0:
+            for sid in student_ids:
+                try:
+                    student = db['students'].find_one({'_id': ObjectId(sid)})
+                except Exception:
+                    continue
+                if not student or not student.get('email'):
+                    continue
 
-        # Prefer email lookup
-        if email:
+                attendance_str = "N/A"
+                try:
+                    from .analytics_service import get_defaulters_list
+                    # Use existing analytics to find this student's attendance
+                    sessions = list(db['sessions'].find({'class_id': ObjectId(class_id), 'status': 'completed'}))
+                    if sessions:
+                        session_ids = [s['_id'] for s in sessions]
+                        total = len(sessions)
+                        present = db['attendance_logs'].count_documents({
+                            'session_id': {'$in': session_ids},
+                            'student_id': str(student['_id']),
+                            'status': 'Present',
+                        })
+                        pct = round((present / total) * 100) if total > 0 else 0
+                        attendance_str = f"{pct}%"
+                except Exception:
+                    pass
+
+                recipients.append({
+                    'email':      student['email'],
+                    'name':       student.get('name', 'Student'),
+                    'attendance': attendance_str,
+                })
+
+        # ── Legacy single-email fallback ──────────────────────────────────
+        elif email:
             student = db['students'].find_one({'email': email})
             if not student:
                 return {
@@ -97,42 +132,48 @@ def send_notification(
                     'message': f'No student found with email "{email}". Please verify the email address.',
                     'code': 404,
                 }
+            if student.get('email'):
+                attendance_str = "N/A"
+                try:
+                    from .analytics_service import get_student_report
+                    report = get_student_report(str(student['_id']))
+                    for subj in report.get('subjects', []):
+                        if str(subj.get('class_id')) == str(class_id):
+                            attendance_str = f"{subj['percentage']}%"
+                            break
+                except Exception:
+                    pass
+                recipients.append({
+                    'email':      student['email'],
+                    'name':       student.get('name', 'Student'),
+                    'attendance': attendance_str,
+                })
+            else:
+                return {'ok': False, 'message': 'Student has no email address on file', 'code': 400}
+
+        # ── Legacy student_id fallback ────────────────────────────────────
         elif student_id:
-            # Legacy fallback: lookup by ObjectId
             try:
                 student = db['students'].find_one({'_id': ObjectId(student_id)})
             except Exception:
-                pass
+                student = None
             if not student:
                 return {'ok': False, 'message': 'Student not found', 'code': 404}
-
-        if student and student.get('email'):
-            # Calculate attendance for this student in this class
-            attendance_str = "N/A"
-            try:
-                from .analytics_service import get_student_report
-                report = get_student_report(str(student['_id']))
-                for subj in report.get('subjects', []):
-                    if str(subj.get('class_id')) == str(class_id):
-                        attendance_str = f"{subj['percentage']}%"
-                        break
-            except Exception:
-                pass
-
-            recipients.append({
-                'email':      student['email'],
-                'name':       student.get('name', 'Student'),
-                'attendance': attendance_str,
-            })
-        else:
-            return {'ok': False, 'message': 'Student has no email address on file', 'code': 400}
+            if student.get('email'):
+                recipients.append({
+                    'email':      student['email'],
+                    'name':       student.get('name', 'Student'),
+                    'attendance': 'N/A',
+                })
+            else:
+                return {'ok': False, 'message': 'Student has no email address on file', 'code': 400}
 
     elif target in ('defaulters', 'critical'):
         # defaulters: < 75%, critical: < 50%
         threshold = 50 if target == 'critical' else 75
         defaulters = get_defaulters_list(class_id, threshold=threshold)
-        student_ids = [ObjectId(d['student_id']) for d in defaulters]
-        students = list(db['students'].find({'_id': {'$in': student_ids}}))
+        student_ids_list = [ObjectId(d['student_id']) for d in defaulters]
+        students = list(db['students'].find({'_id': {'$in': student_ids_list}}))
         student_map = {str(s['_id']): s for s in students}
 
         for d in defaulters:
@@ -145,27 +186,18 @@ def send_notification(
                 })
 
     elif target == 'all':
-        # Find all students who have attended this class's sessions
-        sessions = list(db['sessions'].find({'class_id': ObjectId(class_id)}))
-        session_ids = [s['_id'] for s in sessions]
-        logs = list(db['attendance_logs'].find({'session_id': {'$in': session_ids}}))
-        seen_ids = list({log['student_id'] for log in logs})
-
-        obj_ids = []
-        for sid in seen_ids:
-            try:
-                obj_ids.append(ObjectId(sid))
-            except Exception:
-                pass
-
-        students = list(db['students'].find({'_id': {'$in': obj_ids}}))
-        for student in students:
-            if student.get('email'):
-                recipients.append({
-                    'email':      student['email'],
-                    'name':       student.get('name', 'Student'),
-                    'attendance': 'Check Dashboard',
-                })
+        # Use class.students (enrolled students) as the recipient source
+        class_doc = db['classes'].find_one({'_id': ObjectId(class_id)})
+        if class_doc:
+            enrolled_ids = [ObjectId(sid) for sid in (class_doc.get('students') or [])]
+            students = list(db['students'].find({'_id': {'$in': enrolled_ids}}))
+            for student in students:
+                if student.get('email'):
+                    recipients.append({
+                        'email':      student['email'],
+                        'name':       student.get('name', 'Student'),
+                        'attendance': 'Check Dashboard',
+                    })
     else:
         return {'ok': False, 'message': f'Invalid target: {target}', 'code': 400}
 
