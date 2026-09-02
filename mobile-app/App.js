@@ -29,6 +29,7 @@ const LogOut     = ({ size, color, style }) => <Ionicons name="log-out-outline" 
 const ChevronDown= ({ size, color, style }) => <Ionicons name="chevron-down-outline"   size={size} color={color} style={style} />;
 const Download   = ({ size, color, style }) => <Ionicons name="download-outline"       size={size} color={color} style={style} />;
 import { api } from './utils/api';
+import StudentApp from '../student-module/StudentApp';
 
 // --- MAIN APP COMPONENT ---
 export default function App() {
@@ -68,7 +69,7 @@ export default function App() {
       case 'TeacherDashboard':
         return <TeacherDashboard navigateTo={navigateTo} userInfo={userInfo} onLogout={handleLogout} setSelectedClass={setSelectedClass} setCurrentSession={setCurrentSession} />;
       case 'StudentDashboard':
-        return <StudentDashboard navigateTo={navigateTo} userInfo={userInfo} onLogout={handleLogout} />;
+        return <StudentApp userInfo={userInfo} onLogout={handleLogout} />;
       case 'RegisterStudent':
         return <RegisterStudentScreen navigateTo={navigateTo} />;
       case 'ScanAttendance':
@@ -317,10 +318,15 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
   const [newSubjectBatch, setNewSubjectBatch] = useState('');
   const [newSubjectDept, setNewSubjectDept] = useState('');
   const [addingSubject, setAddingSubject] = useState(false);
-  // Student multi-select state
+  // Student multi-select state (shared by Add Subject & Update Class)
   const [availableStudents, setAvailableStudents] = useState([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [studentsLoading, setStudentsLoading] = useState(false);
+
+  // Update Class modal state
+  const [showUpdateClass, setShowUpdateClass] = useState(false);
+  const [updateClassBatch, setUpdateClassBatch] = useState('');
+  const [updatingClass, setUpdatingClass] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -445,6 +451,47 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
       Alert.alert('Error', err.message || 'Network error');
     } finally {
       setAddingSubject(false);
+    }
+  };
+
+  // ── Update Class handlers ─────────────────────────────────────────────────
+  const handleOpenUpdateClass = async () => {
+    if (!selectedClassData) {
+      Alert.alert('Error', 'Please select a class first');
+      return;
+    }
+    setUpdateClassBatch(selectedClassData.batch || '');
+    // Pre-select currently enrolled students
+    setSelectedStudentIds(selectedClassData.students || []);
+    setShowUpdateClass(true);
+    await loadStudentsForPicker();
+  };
+
+  const handleSaveUpdateClass = async () => {
+    if (!selectedClassData) return;
+    setUpdatingClass(true);
+    try {
+      const result = await api.updateClass(selectedClassData.id, {
+        students: selectedStudentIds,
+        batch: updateClassBatch.trim() || undefined,
+      });
+      if (result.status === 'success') {
+        Alert.alert('Success', `Class updated with ${selectedStudentIds.length} student(s)!`);
+        setShowUpdateClass(false);
+        // Refresh class data
+        const classesResult = await api.getClasses(userInfo.id);
+        if (classesResult.status === 'success') {
+          setClasses(classesResult.data);
+          // Refresh summary for updated class
+          if (selectedClassId) loadClassData(selectedClassId);
+        }
+      } else {
+        Alert.alert('Error', result.message || 'Could not update class');
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Network error');
+    } finally {
+      setUpdatingClass(false);
     }
   };
 
@@ -637,6 +684,92 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
         </View>
       </Modal>
 
+      {/* ── Update Class Modal ──────────────────────────────────────── */}
+      <Modal
+        visible={showUpdateClass}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowUpdateClass(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '85%' }]}>
+            <Text style={styles.modalTitle}>Update Class</Text>
+
+            {selectedClassData && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#1f2937' }}>
+                  {selectedClassData.name} ({selectedClassData.code})
+                </Text>
+              </View>
+            )}
+
+            <Text style={{ fontWeight: '600', color: '#374151', marginBottom: 4 }}>Batch</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. 2024"
+              value={updateClassBatch}
+              onChangeText={setUpdateClassBatch}
+            />
+
+            <Text style={{ fontWeight: '600', color: '#374151', marginTop: 8, marginBottom: 4 }}>
+              Enrolled Students ({selectedStudentIds.length} selected)
+            </Text>
+
+            <ScrollView style={{ maxHeight: 320, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 4 }}>
+              {studentsLoading ? (
+                <ActivityIndicator style={{ margin: 24 }} color="#2563eb" />
+              ) : availableStudents.length === 0 ? (
+                <Text style={{ padding: 16, color: '#9ca3af', textAlign: 'center' }}>
+                  No registered students found.
+                </Text>
+              ) : (
+                availableStudents.map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8,
+                      borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+                      backgroundColor: selectedStudentIds.includes(s.id) ? '#eff6ff' : 'transparent',
+                    }}
+                    onPress={() => toggleStudentSelection(s.id)}
+                  >
+                    <Ionicons
+                      name={selectedStudentIds.includes(s.id) ? 'checkbox' : 'square-outline'}
+                      size={22}
+                      color={selectedStudentIds.includes(s.id) ? '#2563eb' : '#9ca3af'}
+                      style={{ marginRight: 10 }}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: '600', color: '#1f2937' }}>{s.name}</Text>
+                      <Text style={{ fontSize: 12, color: '#6b7280' }}>
+                        Roll: {s.roll_no || '—'} • {s.batch || '—'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.primaryButton, { marginTop: 12, opacity: updatingClass ? 0.6 : 1 }]}
+              onPress={handleSaveUpdateClass}
+              disabled={updatingClass}
+            >
+              <Text style={styles.primaryButtonText}>
+                {updatingClass ? 'Saving...' : '✓ Save Changes'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setShowUpdateClass(false)}
+            >
+              <Text style={styles.modalCloseButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* Header */}
       <View style={styles.header}>
         <View>
@@ -707,71 +840,60 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
           </View>
         )}
 
-        {/* Action Buttons — 2x2 Grid */}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#16a34a', width: '47%' }]}
-            onPress={handleStartAttendance}
-          >
-            <Camera color="white" size={28} style={{ marginBottom: 6 }} />
-            <Text style={styles.actionButtonText}>Start{'\n'}Attendance</Text>
-          </TouchableOpacity>
+        {/* Action Buttons — 2+2+1 Grid */}
+        <View style={{ marginBottom: 16 }}>
+          {/* Row 1 */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#16a34a', width: '48%' }]}
+              onPress={handleStartAttendance}
+            >
+              <Camera color="white" size={26} style={{ marginBottom: 6 }} />
+              <Text style={styles.actionButtonText}>Start{`\n`}Attendance</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#6366f1', width: '47%' }]}
-            onPress={() => {
-              setSelectedClass(selectedClassData);
-              navigateTo('DetailedReport');
-            }}
-          >
-            <BarChart3 color="white" size={28} style={{ marginBottom: 6 }} />
-            <Text style={styles.actionButtonText}>View{'\n'}Reports</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#6366f1', width: '48%' }]}
+              onPress={() => {
+                setSelectedClass(selectedClassData);
+                navigateTo('DetailedReport');
+              }}
+            >
+              <BarChart3 color="white" size={26} style={{ marginBottom: 6 }} />
+              <Text style={styles.actionButtonText}>View{`\n`}Reports</Text>
+            </TouchableOpacity>
+          </View>
 
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#ea580c', width: '47%' }]}
-            onPress={() => navigateTo('RegisterStudent')}
-          >
-            <Camera color="white" size={28} style={{ marginBottom: 6 }} />
-            <Text style={styles.actionButtonText}>Register{'\n'}Student</Text>
-          </TouchableOpacity>
+          {/* Row 2 */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#ea580c', width: '48%' }]}
+              onPress={() => navigateTo('RegisterStudent')}
+            >
+              <Camera color="white" size={26} style={{ marginBottom: 6 }} />
+              <Text style={styles.actionButtonText}>Register{`\n`}Student</Text>
+            </TouchableOpacity>
 
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#0891b2', width: '48%' }]}
+              onPress={() => setShowAddSubject(true)}
+            >
+              <Ionicons name="book-outline" color="white" size={26} style={{ marginBottom: 6 }} />
+              <Text style={styles.actionButtonText}>Add{`\n`}Subject</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Row 3 — full width */}
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#0891b2', width: '47%' }]}
-            onPress={() => setShowAddSubject(true)}
+            style={[styles.actionButton, { backgroundColor: '#7c3aed', width: '100%', flexDirection: 'row', height: 56, justifyContent: 'center' }]}
+            onPress={handleOpenUpdateClass}
           >
-            <Text style={{ fontSize: 26, marginBottom: 6 }}>📚</Text>
-            <Text style={styles.actionButtonText}>Add{'\n'}Subject</Text>
+            <Settings color="white" size={22} style={{ marginRight: 8 }} />
+            <Text style={[styles.actionButtonText, { fontSize: 15 }]}>Update Class</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Defaulters List */}
-        {defaulters.length > 0 && (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.sectionTitle}>Defaulter List (Top 5)</Text>
-              <TouchableOpacity onPress={() => { setSelectedClass(selectedClassData); navigateTo('NotificationHub'); }}>
-                <Text style={styles.linkText}>Notify All</Text>
-              </TouchableOpacity>
-            </View>
 
-            {defaulters.slice(0, 5).map((student, index) => (
-              <View key={index} style={styles.reportRow}>
-                <Text style={styles.reportLabel}>{student.name}</Text>
-                <Text style={[styles.reportValue, { color: '#dc2626', backgroundColor: '#fee2e2' }]}>
-                  {student.attendance}%
-                </Text>
-              </View>
-            ))}
-
-            <TouchableOpacity
-              style={styles.outlineButton}
-              onPress={() => { setSelectedClass(selectedClassData); navigateTo('NotificationHub'); }}
-            >
-              <Text style={styles.outlineButtonText}>🚨 Send Notifications</Text>
-            </TouchableOpacity>
-          </View>
-        )}
       </ScrollView>
 
       {/* Bottom Nav */}
@@ -784,10 +906,10 @@ const TeacherDashboard = ({ navigateTo, userInfo, onLogout, setSelectedClass, se
           <BarChart3 color="#9ca3af" size={24} />
           <Text style={styles.navText}>Reports</Text>
         </TouchableOpacity>
-        <View style={styles.navItem}>
-          <Settings color="#9ca3af" size={24} />
-          <Text style={styles.navText}>Settings</Text>
-        </View>
+        <TouchableOpacity style={styles.navItem} onPress={() => { setSelectedClass(selectedClassData); navigateTo('NotificationHub'); }}>
+          <Bell color="#9ca3af" size={24} />
+          <Text style={styles.navText}>Notifications</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -1975,19 +2097,41 @@ const DetailedReportScreen = ({ navigateTo, selectedClass }) => {
 const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
   const [target, setTarget] = useState('defaulters');
   const [message, setMessage] = useState('Dear Student, your attendance is below the required threshold. Please meet the HOD immediately.');
-  const [studentEmail, setStudentEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [classStudents, setClassStudents] = useState([]);
-  const [showStudentPicker, setShowStudentPicker] = useState(false);
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
 
-  // Load students for the email picker
+  // Load enrolled students for this class
   useEffect(() => {
-    if (target === 'individual') {
-      api.getStudents().then(res => {
-        if (res.status === 'success') setClassStudents(res.data || []);
-      }).catch(() => {});
-    }
-  }, [target]);
+    const loadEnrolledStudents = async () => {
+      if (!selectedClass?.students || selectedClass.students.length === 0) {
+        setClassStudents([]);
+        return;
+      }
+      setStudentsLoading(true);
+      try {
+        const res = await api.getStudents();
+        if (res.status === 'success') {
+          // Filter to only enrolled students
+          const enrolledIds = new Set(selectedClass.students);
+          const enrolled = (res.data || []).filter(s => enrolledIds.has(s.id));
+          setClassStudents(enrolled);
+        }
+      } catch {
+        // silent
+      } finally {
+        setStudentsLoading(false);
+      }
+    };
+    loadEnrolledStudents();
+  }, [selectedClass]);
+
+  const toggleStudentSelection = (id) => {
+    setSelectedStudentIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
 
   const handleSend = async () => {
     if (!selectedClass?.id) {
@@ -1998,28 +2142,23 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
       Alert.alert('Error', 'Notification message cannot be empty.');
       return;
     }
-    if (target === 'individual') {
-      if (!studentEmail.trim()) {
-        Alert.alert('Error', 'Please enter the student email address.');
-        return;
-      }
-      if (!studentEmail.includes('@')) {
-        Alert.alert('Error', 'Please enter a valid email address.');
-        return;
-      }
+    if (target === 'individual' && selectedStudentIds.length === 0) {
+      Alert.alert('Error', 'Please select at least one student.');
+      return;
     }
 
     setLoading(true);
     try {
       const result = await api.sendNotification(
-        selectedClass?.id,
+        selectedClass.id,
         target,
         message,
-        target === 'individual' ? studentEmail.trim().toLowerCase() : null
+        null,  // email (legacy)
+        target === 'individual' ? selectedStudentIds : null
       );
       if (result.status === 'success') {
         Alert.alert('Success', result.message || 'Notifications sent successfully!');
-        setStudentEmail('');
+        setSelectedStudentIds([]);
       } else {
         Alert.alert('Error', result.message || 'Failed to send notifications.');
       }
@@ -2043,43 +2182,19 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
         <View style={{ width: 24 }} />
       </View>
 
-      {/* Student email picker modal */}
-      <Modal
-        visible={showStudentPicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowStudentPicker(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Student</Text>
-            <ScrollView style={{ maxHeight: 380 }}>
-              {classStudents.length === 0 ? (
-                <Text style={{ textAlign: 'center', padding: 24, color: '#9ca3af' }}>No students found</Text>
-              ) : (
-                classStudents.map((s) => (
-                  <TouchableOpacity
-                    key={s.id}
-                    style={styles.modalItem}
-                    onPress={() => { setStudentEmail(s.email); setShowStudentPicker(false); }}
-                  >
-                    <Text style={styles.modalItemText}>{s.name}</Text>
-                    <Text style={styles.modalItemSubtext}>{s.email}{s.roll_no ? ` • ${s.roll_no}` : ''}</Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={() => setShowStudentPicker(false)}
-            >
-              <Text style={styles.modalCloseButtonText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       <ScrollView style={styles.scrollContent}>
+        {/* Class context */}
+        {selectedClass && (
+          <View style={{ marginBottom: 12, padding: 12, backgroundColor: '#eff6ff', borderRadius: 12 }}>
+            <Text style={{ fontWeight: '700', color: '#1f2937', fontSize: 15 }}>
+              {selectedClass.name} ({selectedClass.code})
+            </Text>
+            <Text style={{ color: '#6b7280', fontSize: 12, marginTop: 2 }}>
+              {selectedClass.total_students || 0} enrolled students
+            </Text>
+          </View>
+        )}
+
         <View style={styles.card}>
           <Text style={styles.cardLabel}>TARGET AUDIENCE</Text>
           <View style={styles.grid2}>
@@ -2109,30 +2224,55 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
               onPress={() => setTarget('individual')}
             >
               <Text style={{ color: '#374151', fontWeight: 'bold' }}>👤 Individual</Text>
-              <Text style={{ fontSize: 10, color: '#6b7280' }}>Single Student</Text>
+              <Text style={{ fontSize: 10, color: '#6b7280' }}>Select Students</Text>
             </TouchableOpacity>
           </View>
 
+          {/* Individual: multi-select student checkboxes */}
           {target === 'individual' && (
             <View style={{ marginTop: 12 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <Text style={styles.label}>Student Email</Text>
-                <TouchableOpacity onPress={() => setShowStudentPicker(true)}>
-                  <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '700' }}>📋 Pick from list</Text>
-                </TouchableOpacity>
-              </View>
-              <TextInput
-                style={styles.input}
-                placeholder="student@institute.edu"
-                placeholderTextColor="#9ca3af"
-                value={studentEmail}
-                onChangeText={setStudentEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-              {studentEmail.length > 0 && !studentEmail.includes('@') && (
-                <Text style={{ color: '#dc2626', fontSize: 11, marginTop: 4 }}>⚠ Please enter a valid email address</Text>
-              )}
+              <Text style={{ fontWeight: '600', color: '#374151', marginBottom: 6 }}>
+                INDIVIDUAL STUDENTS
+              </Text>
+
+              <ScrollView style={{ maxHeight: 280, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 4 }}>
+                {studentsLoading ? (
+                  <ActivityIndicator style={{ margin: 24 }} color="#2563eb" />
+                ) : classStudents.length === 0 ? (
+                  <Text style={{ padding: 16, color: '#9ca3af', textAlign: 'center' }}>
+                    No students are enrolled in this class.
+                  </Text>
+                ) : (
+                  classStudents.map((s) => (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8,
+                        borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+                        backgroundColor: selectedStudentIds.includes(s.id) ? '#eff6ff' : 'transparent',
+                      }}
+                      onPress={() => toggleStudentSelection(s.id)}
+                    >
+                      <Ionicons
+                        name={selectedStudentIds.includes(s.id) ? 'checkbox' : 'square-outline'}
+                        size={22}
+                        color={selectedStudentIds.includes(s.id) ? '#2563eb' : '#9ca3af'}
+                        style={{ marginRight: 10 }}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontWeight: '600', color: '#1f2937' }}>{s.name}</Text>
+                        <Text style={{ fontSize: 12, color: '#6b7280' }}>
+                          {s.email || '—'}{s.roll_no ? ` • ${s.roll_no}` : ''}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </ScrollView>
+
+              <Text style={{ textAlign: 'right', color: '#6b7280', fontSize: 12, marginTop: 4 }}>
+                Selected: {selectedStudentIds.length} student{selectedStudentIds.length !== 1 ? 's' : ''}
+              </Text>
             </View>
           )}
         </View>
@@ -2149,7 +2289,7 @@ const NotificationHubScreen = ({ navigateTo, selectedClass }) => {
         </View>
 
         <TouchableOpacity
-          style={[styles.primaryButton, { backgroundColor: '#4f46e5' }]}
+          style={[styles.primaryButton, { backgroundColor: '#4f46e5', opacity: loading ? 0.6 : 1 }]}
           onPress={handleSend}
           disabled={loading}
         >
@@ -2209,8 +2349,8 @@ const styles = StyleSheet.create({
 
   // Action Grid
   actionGrid: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  actionButton: { flex: 1, padding: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', height: 100 },
-  actionButtonText: { color: 'white', fontWeight: 'bold', textAlign: 'center', fontSize: 13 },
+  actionButton: { padding: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', minHeight: 100 },
+  actionButtonText: { color: 'white', fontWeight: 'bold', textAlign: 'center', fontSize: 14 },
 
   // Reports
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },

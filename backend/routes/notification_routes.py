@@ -22,8 +22,9 @@ def send_notification():
         target=data.get('target'),
         message=data.get('message'),
         sent_by=request.user['user_id'],
-        email=data.get('email'),            # New: for individual target
+        email=data.get('email'),            # Legacy: for individual target (single email)
         student_id=data.get('student_id'),  # Legacy fallback (kept for compatibility)
+        student_ids=data.get('student_ids'),  # New: multi-select individual target
     )
     if result['ok']:
         return jsonify({'status': 'success', 'message': result.get('message', 'Notification sent'),

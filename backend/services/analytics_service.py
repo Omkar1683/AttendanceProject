@@ -25,10 +25,18 @@ def _pct(present: int, total: int) -> float:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def get_today_summary(class_id: str) -> dict:
-    """Today's attendance summary for a class."""
+    """Today's attendance summary for a class, based on enrolled students."""
     db = get_db()
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow = today + timedelta(days=1)
+
+    # ── Get enrolled students (source of truth) ───────────────────────────
+    class_doc = db['classes'].find_one({'_id': ObjectId(class_id)})
+    enrolled_ids = set(str(sid) for sid in (class_doc.get('students') or [])) if class_doc else set()
+    total_enrolled = len(enrolled_ids)
+
+    if total_enrolled == 0:
+        return {'present': 0, 'absent': 0, 'percentage': 0, 'total_students': 0}
 
     sessions = list(db['sessions'].find({
         'class_id': ObjectId(class_id),
@@ -36,28 +44,34 @@ def get_today_summary(class_id: str) -> dict:
     }))
 
     if not sessions:
-        return {'present': 0, 'absent': 0, 'percentage': 0, 'total_students': 0}
+        return {'present': 0, 'absent': total_enrolled, 'percentage': 0, 'total_students': total_enrolled}
 
     session_ids = [s['_id'] for s in sessions]
-    present_count = db['attendance_logs'].count_documents({
+
+    # Get distinct student IDs who are Present AND enrolled
+    logs = list(db['attendance_logs'].find({
         'session_id': {'$in': session_ids},
         'status': 'Present',
-    })
+    }))
+    present_ids = set()
+    for log in logs:
+        sid = str(log['student_id'])
+        if sid in enrolled_ids:
+            present_ids.add(sid)
 
-    class_doc = db['classes'].find_one({'_id': ObjectId(class_id)})
-    total_students = class_doc.get('total_students', 0) if class_doc else 0
-    absent_count = max(total_students - present_count, 0)
+    present_count = len(present_ids)
+    absent_count = total_enrolled - present_count
 
     return {
         'present':        present_count,
         'absent':         absent_count,
-        'percentage':     _pct(present_count, total_students),
-        'total_students': total_students,
+        'percentage':     _pct(present_count, total_enrolled),
+        'total_students': total_enrolled,
     }
 
 
 def get_defaulters_list(class_id: str, threshold: int = 75) -> list:
-    """Students with attendance below *threshold*%."""
+    """Students with attendance below *threshold*% — only enrolled students."""
     db = get_db()
     sessions = list(db['sessions'].find({
         'class_id': ObjectId(class_id),
@@ -69,11 +83,16 @@ def get_defaulters_list(class_id: str, threshold: int = 75) -> list:
 
     total_classes = len(sessions)
     session_ids = [s['_id'] for s in sessions]
-    all_students = list(db['students'].find({}))
+
+    # Only check enrolled students, not all students on the platform
+    class_doc = db['classes'].find_one({'_id': ObjectId(class_id)})
+    enrolled_ids = [str(sid) for sid in (class_doc.get('students') or [])] if class_doc else []
 
     defaulters = []
-    for student in all_students:
-        sid = str(student['_id'])
+    for sid in enrolled_ids:
+        student = db['students'].find_one({'_id': ObjectId(sid)})
+        if not student:
+            continue
         present_count = db['attendance_logs'].count_documents({
             'session_id': {'$in': session_ids},
             'student_id': sid,
@@ -94,7 +113,7 @@ def get_defaulters_list(class_id: str, threshold: int = 75) -> list:
 
 
 def get_monthly_report(class_id: str, month: int, year: int) -> dict:
-    """Per-student attendance report for a calendar month."""
+    """Per-student attendance report for a calendar month — enrolled students only."""
     db = get_db()
     start_date = datetime(year, month, 1)
     end_date = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
@@ -110,11 +129,16 @@ def get_monthly_report(class_id: str, month: int, year: int) -> dict:
 
     total_classes = len(sessions)
     session_ids = [s['_id'] for s in sessions]
-    all_students = list(db['students'].find({}))
+
+    # Only report on enrolled students, not all students on the platform
+    class_doc = db['classes'].find_one({'_id': ObjectId(class_id)})
+    enrolled_ids = [str(sid) for sid in (class_doc.get('students') or [])] if class_doc else []
 
     student_reports = []
-    for student in all_students:
-        sid = str(student['_id'])
+    for sid in enrolled_ids:
+        student = db['students'].find_one({'_id': ObjectId(sid)})
+        if not student:
+            continue
         present_count = db['attendance_logs'].count_documents({
             'session_id': {'$in': session_ids},
             'student_id': sid,

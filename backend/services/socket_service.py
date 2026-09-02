@@ -54,6 +54,19 @@ def init_socketio(app) -> SocketIO:
         print(f"[SocketIO] Client joined room: {room}")
         emit('joined', {'room': room})
 
+    @socketio.on('join_student')
+    def on_join_student(data):
+        """
+        Student client sends: { "student_id": "<id>" }
+        Server puts the client into room "student_<id>".
+        Used for real-time attendance updates to student clients.
+        """
+        student_id = data.get('student_id', '')
+        room = f"student_{student_id}"
+        join_room(room)
+        print(f"[SocketIO] Student joined room: {room}")
+        emit('joined', {'room': room})
+
     @socketio.on('disconnect')
     def on_disconnect():
         print("[SocketIO] Client disconnected")
@@ -103,3 +116,15 @@ def emit_queue_status(stats: dict) -> None:
     if socketio is None:
         return
     socketio.emit('queue_status', stats)
+
+
+def emit_student_attendance_update(student_id: str, data: dict) -> None:
+    """
+    Notify a specific student that their attendance was updated.
+    The student client listens for 'student_attendance_update' events.
+    """
+    if socketio is None:
+        return
+    room = f"student_{student_id}"
+    socketio.emit('student_attendance_update', data, room=room)
+

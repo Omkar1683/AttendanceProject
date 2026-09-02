@@ -113,6 +113,60 @@ def create_class():
     return jsonify({'status': 'error', 'message': result['message']}), result['code']
 
 
+# ── /classes/<class_id>  (UPDATE) ─────────────────────────────────────────────
+
+@auth_bp.route('/classes/<class_id>', methods=['PUT'])
+@token_required
+@role_required('teacher')
+def update_class(class_id):
+    """
+    Update an existing class's enrolled students and/or batch.
+    Teacher ownership is verified via JWT — a teacher can only
+    modify their own classes.
+    """
+    from bson import ObjectId
+    data = request.get_json(silent=True) or {}
+    teacher_id = request.user.get('user_id')
+
+    db = __import__('database.connection', fromlist=['get_db']).get_db()
+    models = __import__('models', fromlist=['get_models']).get_models(db)
+
+    # ── Verify class exists ───────────────────────────────────────────────
+    class_doc = models['classes'].find_by_id(class_id)
+    if not class_doc:
+        return jsonify({'status': 'error', 'message': 'Class not found'}), 404
+
+    # ── Verify teacher ownership ──────────────────────────────────────────
+    if str(class_doc.get('teacher_id')) != teacher_id:
+        return jsonify({'status': 'error', 'message': 'Forbidden — not your class'}), 403
+
+    # ── Validate student IDs ──────────────────────────────────────────────
+    student_ids = data.get('students', [])
+    if student_ids:
+        valid_count = db['students'].count_documents({
+            '_id': {'$in': [ObjectId(sid) for sid in student_ids]}
+        })
+        if valid_count != len(student_ids):
+            return jsonify({
+                'status': 'error',
+                'message': f'Some student IDs are invalid ({valid_count}/{len(student_ids)} found)',
+            }), 400
+
+    # ── Update ────────────────────────────────────────────────────────────
+    batch = data.get('batch')
+    models['classes'].update_class_details(
+        class_id=class_id,
+        student_ids=student_ids,
+        batch=batch,
+    )
+
+    return jsonify({
+        'status': 'success',
+        'message': 'Class updated',
+        'total_students': len(student_ids),
+    })
+
+
 # ── / (health check) ─────────────────────────────────────────────────────────
 
 @auth_bp.route('/', methods=['GET'])

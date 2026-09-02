@@ -38,6 +38,7 @@ from routes.attendance_routes   import attendance_bp
 from routes.analytics_routes    import analytics_bp
 from routes.notification_routes import notification_bp
 from routes.student_routes      import student_bp
+from routes.student_module_routes import student_module_bp
 
 mail = Mail()
 
@@ -93,6 +94,7 @@ def create_app(config_name: str = None) -> Flask:
     app.register_blueprint(analytics_bp)      # /analytics/*, /reports/*
     app.register_blueprint(notification_bp)   # /notifications/send
     app.register_blueprint(student_bp)        # /student/* (self-service student APIs)
+    app.register_blueprint(student_module_bp)  # /student/* (student module: notifications, analytics, export)
 
     return app
 

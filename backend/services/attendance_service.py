@@ -33,7 +33,8 @@ def create_session(class_id: str, teacher_id: str, location: str = 'Classroom') 
 
 def stop_session(session_id: str) -> dict:
     """
-    Mark an active session as completed.
+    Mark an active session as completed, then finalize attendance:
+    every enrolled student without a record gets marked Absent.
 
     Returns:
         {'ok': True}
@@ -44,11 +45,41 @@ def stop_session(session_id: str) -> dict:
 
     db = get_db()
     models = get_models(db)
-    success = models['sessions'].end_session(session_id)
 
-    if success:
-        return {'ok': True}
-    return {'ok': False, 'message': 'Failed to stop session', 'code': 400}
+    # Look up the session to get class_id before ending it
+    session_doc = models['sessions'].find_one(
+        {'_id': __import__('bson').ObjectId(session_id)}
+    )
+    if not session_doc:
+        return {'ok': False, 'message': 'Session not found', 'code': 404}
+
+    success = models['sessions'].end_session(session_id)
+    if not success:
+        return {'ok': False, 'message': 'Failed to stop session', 'code': 400}
+
+    # ── Finalize: auto-mark Absent for enrolled students with no record ────
+    class_id = str(session_doc['class_id'])
+    class_doc = models['classes'].find_by_id(class_id)
+    if class_doc:
+        enrolled_ids = [str(sid) for sid in (class_doc.get('students') or [])]
+        # Get existing attendance records for this session
+        existing_logs = models['attendance_logs'].find_by_session(session_id)
+        already_marked = {log['student_id'] for log in existing_logs}
+
+        for sid in enrolled_ids:
+            if sid not in already_marked:
+                # Student has no record at all → mark Absent
+                student = models['students'].find_by_id(sid)
+                student_name = student['name'] if student else 'Unknown'
+                models['attendance_logs'].mark_attendance(
+                    session_id=session_id,
+                    student_id=sid,
+                    student_name=student_name,
+                    status='Absent',
+                    marked_by='AI',
+                )
+
+    return {'ok': True}
 
 
 def manual_mark(student_id: str, session_id: str, status: str = 'Present') -> dict:
@@ -56,7 +87,8 @@ def manual_mark(student_id: str, session_id: str, status: str = 'Present') -> di
     Manually set attendance status for a student in a session.
 
     Args:
-        status: 'Present' to mark present, anything else removes the record.
+        status: 'Present' or 'Absent'. Both create/update an actual
+                attendance record with marked_by='Manual'.
     Returns:
         {'ok': True}
         {'ok': False, 'message': str, 'code': int}
@@ -67,18 +99,17 @@ def manual_mark(student_id: str, session_id: str, status: str = 'Present') -> di
     db = get_db()
     models = get_models(db)
 
-    if status == 'Present':
-        student = models['students'].find_by_id(student_id)
-        student_name = student['name'] if student else 'Unknown'
-        models['attendance_logs'].mark_attendance(
-            session_id=session_id,
-            student_id=student_id,
-            student_name=student_name,
-            status='Present',
-            marked_by='Manual',
-        )
-    else:
-        models['attendance_logs'].delete_attendance(session_id, student_id)
+    student = models['students'].find_by_id(student_id)
+    student_name = student['name'] if student else 'Unknown'
+
+    # Both Present and Absent create a real record with marked_by='Manual'
+    models['attendance_logs'].mark_attendance(
+        session_id=session_id,
+        student_id=student_id,
+        student_name=student_name,
+        status=status if status in ('Present', 'Absent') else 'Present',
+        marked_by='Manual',
+    )
 
     return {'ok': True}
 

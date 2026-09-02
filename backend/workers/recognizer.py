@@ -63,10 +63,23 @@ def process_frame(job, worker_name: str) -> None:
             print(f"[{worker_name}] {result.get('message', 'No result')}")
             return
 
-        # ── 3. Process each recognised face ───────────────────────────────────
+        # ── 3. Look up enrolled students for this session's class ─────────
         db     = get_db()
         models = get_models(db) if db is not None else None
 
+        enrolled_ids = None
+        if models:
+            session_doc = models['sessions'].find_one(
+                {'_id': __import__('bson').ObjectId(session_id)}
+            )
+            if session_doc:
+                class_doc = models['classes'].find_by_id(str(session_doc['class_id']))
+                if class_doc:
+                    enrolled_ids = set(
+                        str(sid) for sid in (class_doc.get('students') or [])
+                    )
+
+        # ── 4. Process each recognised face ───────────────────────────────
         for person in result.get('people', []):
             name       = person.get('name', 'Unknown')
             student_id = person.get('student_id')
@@ -76,12 +89,30 @@ def process_frame(job, worker_name: str) -> None:
                 print(f"[{worker_name}] Unknown face — skipping DB write")
                 continue
 
-            # ── 3a. Session-level student dedup ───────────────────────────────
+            # ── 4a. Enrollment check ──────────────────────────────────────
+            if enrolled_ids is not None and student_id not in enrolled_ids:
+                print(f"[{worker_name}] {name} NOT enrolled in this class — skip")
+                continue
+
+            # ── 4b. Session-level student dedup ───────────────────────────
             if cache.is_already_marked(session_id, student_id):
                 print(f"[{worker_name}] {name} already marked this session — skip")
                 continue
 
-            # ── 3b. Write attendance to DB ────────────────────────────────────
+            # ── 4c. Manual override check ─────────────────────────────────
+            #    If a teacher has already manually set this student's status,
+            #    do NOT overwrite with an AI scan.
+            if models:
+                existing = models['attendance_logs'].find_one({
+                    'session_id': __import__('bson').ObjectId(session_id),
+                    'student_id': student_id,
+                })
+                if existing and existing.get('marked_by') == 'Manual':
+                    print(f"[{worker_name}] {name} has Manual record — AI skip")
+                    cache.mark_student(session_id, student_id)  # prevent future checks
+                    continue
+
+            # ── 4d. Write attendance to DB ────────────────────────────────
             if models:
                 # Compute confidence from the encoding distance stored by
                 # face_service (face_service stores it in the person dict
@@ -99,14 +130,14 @@ def process_frame(job, worker_name: str) -> None:
                 if new_id:
                     models['sessions'].increment_scanned(session_id)
 
-            # ── 3c. Update session cache ──────────────────────────────────────
+            # ── 4e. Update session cache ──────────────────────────────────
             cache.mark_student(session_id, student_id)
             present_count = cache.get_present_count(session_id)
 
             print(f"[{worker_name}] Recognized {name}  "
                   f"(total present this session: {present_count})")
 
-            # ── 3d. Emit WebSocket event ──────────────────────────────────────
+            # ── 4f. Emit WebSocket event ──────────────────────────────────
             socket_service.emit_attendance(
                 session_id=session_id,
                 student_id=student_id,
@@ -114,6 +145,18 @@ def process_frame(job, worker_name: str) -> None:
                 confidence=confidence,
                 present_count=present_count,
                 worker_name=worker_name,
+            )
+
+            # ── 4g. Notify student client ─────────────────────────────
+            socket_service.emit_student_attendance_update(
+                student_id=student_id,
+                data={
+                    'event': 'attendance_marked',
+                    'session_id': session_id,
+                    'status': 'Present',
+                    'marked_by': 'AI',
+                    'confidence': round(confidence, 3),
+                },
             )
 
     except Exception as exc:
