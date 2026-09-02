@@ -1,15 +1,15 @@
 services:
   - type: web
     name: attendai-backend
-    runtime: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    runtime: docker
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: APP_ENV
         value: production
       - key: JWT_SECRET
         sync: false
+      - key: JWT_EXPIRY_DAYS
+        value: "7"
       - key: MONGO_USERNAME
         sync: false
       - key: MONGO_PASSWORD

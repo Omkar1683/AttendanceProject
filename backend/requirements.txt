@@ -11,5 +11,4 @@ python-dotenv
 pandas
 gunicorn
 Flask-Mail
-dlib
 face_recognition
