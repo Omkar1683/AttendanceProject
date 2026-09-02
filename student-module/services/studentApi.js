@@ -9,8 +9,8 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 // Same backend URL as the teacher module — must stay in sync
-const BASE_URL = 'http://192.168.0.107:5000';
-const WS_URL = 'ws://192.168.0.107:5000';
+const BASE_URL = 'https://attendai-j5a4.onrender.com';
+const WS_URL = 'wss://attendai-j5a4.onrender.com';
 
 const getHeaders = async () => {
   const token = await AsyncStorage.getItem('userToken');

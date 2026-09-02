@@ -3,8 +3,8 @@ import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 
 // Backend server URL - ensure your mobile device is on the same network
-const BASE_URL = "http://192.168.0.107:5000";
-const WS_URL = "ws://192.168.0.107:5000"; // WebSocket base (same host, ws:// scheme)
+const BASE_URL = "https://attendai-j5a4.onrender.com";
+const WS_URL = "wss://attendai-j5a4.onrender.com"; // WebSocket base (same host, wss:// scheme)
 
 const getHeaders = async () => {
   const token = await AsyncStorage.getItem("userToken");
