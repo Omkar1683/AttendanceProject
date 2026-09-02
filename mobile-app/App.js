@@ -1259,7 +1259,7 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
     if (!cameraRef.current) return;
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.4,        // compressed for fast network upload & instant backend decoding (~40-60 KB)
+        quality: 0.6,        // optimised for face_recognition (~200-300 KB)
         base64: false,
         skipProcessing: true, // skip camera post-processing for speed
       });
@@ -1282,7 +1282,7 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  Start / stop the 1200 ms capture interval
+  //  Start / stop the 700 ms capture interval
   // ─────────────────────────────────────────────────────────────────────────
   const startCapture = () => {
     if (!currentSession) {
@@ -1297,10 +1297,10 @@ const ScanAttendanceScreen = ({ navigateTo, currentSession }) => {
     // Capture first frame immediately
     captureAndEnqueue();
 
-    // Then every 1200 ms — smooth rate for both local and cloud servers
+    // Then every 700 ms — no waiting for the API
     captureInterval.current = setInterval(() => {
       if (isScanningRef.current) captureAndEnqueue();
-    }, 1200);
+    }, 700);
   };
 
   const stopCapture = () => {

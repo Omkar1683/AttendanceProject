@@ -92,9 +92,12 @@ class FaceService:
             print("[Scan] ERROR: cv2.imdecode returned None - corrupted or unsupported image")
             return {'status': 'error', 'message': 'Corrupted image'}
 
-        # ── 2. Proportional resize — cap longer edge at 640px for high speed ──
+        # ── 2. Proportional resize — only shrink if the image is very large ───
+        #   Mobile cameras send portrait frames (e.g. 1080x1920).
+        #   A hard 640x480 resize squishes the face and kills detection.
+        #   Cap the longer edge at 1000 px while preserving aspect ratio.
         h, w = img.shape[:2]
-        max_dim = 640
+        max_dim = 1000
         if max(h, w) > max_dim:
             scale = max_dim / max(h, w)
             new_w, new_h = int(w * scale), int(h * scale)
@@ -106,10 +109,13 @@ class FaceService:
         # ── 3. Convert colour space ───────────────────────────────────────────
         rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # ── 4. Detect faces (upsample=1 for speed & accuracy) ─────────────────
+        # ── 4. Detect faces ───────────────────────────────────────────────────
+        #   number_of_times_to_upsample=2 upscales the image twice before
+        #   running the face detector — finds faces that are small relative
+        #   to the overall frame (person not close to camera).
         face_locations = face_recognition.face_locations(
             rgb_img,
-            number_of_times_to_upsample=1,
+            number_of_times_to_upsample=2,
         )
         face_encodings = face_recognition.face_encodings(rgb_img, face_locations)
 
