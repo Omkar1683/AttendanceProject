@@ -1,17 +1,17 @@
-# ── Stage: Use conda for pre-compiled dlib (no CMake/C++ compilation = no OOM) ──
-FROM continuumio/miniconda3:23.5.2-0
+# Use mambaforge — mamba has a C++ SAT solver (much lower memory than conda)
+FROM condaforge/mambaforge:23.3.1-1
 
 WORKDIR /app
 
-# Install Python 3.10 + dlib via conda-forge (pre-built binary)
-RUN conda install -c conda-forge python=3.10 dlib -y --quiet \
-    && conda clean -afy
+# mamba installs dlib pre-compiled binary with minimal RAM usage
+RUN mamba install -c conda-forge python=3.10 dlib -y --quiet \
+    && mamba clean -afy
 
 # Install remaining pip packages
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend source code
+# Copy backend source
 COPY backend/ .
 
 EXPOSE 5000
