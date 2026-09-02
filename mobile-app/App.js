@@ -29,7 +29,7 @@ const LogOut     = ({ size, color, style }) => <Ionicons name="log-out-outline" 
 const ChevronDown= ({ size, color, style }) => <Ionicons name="chevron-down-outline"   size={size} color={color} style={style} />;
 const Download   = ({ size, color, style }) => <Ionicons name="download-outline"       size={size} color={color} style={style} />;
 import { api } from './utils/api';
-import StudentApp from '../student-module/StudentApp';
+import StudentApp from './student-module/StudentApp';
 
 // --- MAIN APP COMPONENT ---
 export default function App() {
