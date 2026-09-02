@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: attendai-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: JWT_SECRET
+        sync: false
+      - key: MONGO_USERNAME
+        sync: false
+      - key: MONGO_PASSWORD
+        sync: false
+      - key: MONGO_HOST
+        sync: false
+      - key: MONGO_DB_NAME
+        sync: false
+      - key: MONGO_APP_NAME
+        sync: false
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: FACE_MATCH_THRESHOLD
+        value: "0.60"
