@@ -34,6 +34,9 @@ def init_socketio(app) -> SocketIO:
         async_mode='threading',
         logger=False,
         engineio_logger=False,
+        ping_timeout=20,
+        ping_interval=25,
+        max_http_buffer_size=10 * 1024 * 1024,
     )
 
     # ── Built-in events ───────────────────────────────────────────────────────

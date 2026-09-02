@@ -103,4 +103,4 @@ if __name__ == '__main__':
     import services.socket_service as socket_service
     app = create_app()
     # Use socketio.run() instead of app.run() so WebSocket handshakes work
-    socket_service.socketio.run(app, host='0.0.0.0', port=5000, debug=app.config.get('DEBUG', True), allow_unsafe_werkzeug=True)
+    socket_service.socketio.run(app, host='0.0.0.0', port=5000, debug=app.config.get('DEBUG', False), allow_unsafe_werkzeug=True)

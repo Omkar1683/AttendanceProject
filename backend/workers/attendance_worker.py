@@ -14,12 +14,13 @@ process exits, so there's no cleanup needed.
 
 Call start_workers() exactly once from create_app().
 """
+import os
 import threading
 from workers.queue_manager import frame_queue, mark_processing, mark_completed, mark_failed
 from workers.recognizer import process_frame
 
-# Number of concurrent worker threads
-NUM_WORKERS = 3
+# Number of concurrent worker threads (1 is optimal for 512MB RAM free instances)
+NUM_WORKERS = int(os.getenv('NUM_WORKERS', '1' if os.getenv('APP_ENV') == 'production' else '2'))
 
 _workers_started = False
 _start_lock = threading.Lock()

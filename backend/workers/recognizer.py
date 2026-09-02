@@ -13,6 +13,7 @@ This module does NOT change any recognition logic. It only wraps
 the existing face_service pipeline with queue infrastructure.
 """
 import time
+import gc
 
 from services.face_service import face_service
 from services import socket_service
@@ -166,3 +167,4 @@ def process_frame(job, worker_name: str) -> None:
     finally:
         # Always release the frame hash, even on error
         frame_hash.release(frame_h)
+        gc.collect()
