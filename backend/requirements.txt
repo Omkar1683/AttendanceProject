@@ -11,6 +11,5 @@ python-dotenv
 pandas
 gunicorn
 Flask-Mail
-# Pre-built dlib wheel (avoids CMake compilation on Render free tier)
-dlib @ https://github.com/z-mahmud22/Dlib_Windows_Python3.x/releases/download/v19.24.6/dlib-19.24.6-cp310-cp310-linux_x86_64.whl ; python_version == "3.10" and sys_platform == "linux"
+dlib
 face_recognition
